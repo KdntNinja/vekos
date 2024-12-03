@@ -139,7 +139,7 @@ Apache-2.0 license
 
 ## Contact
 
-[Add contact information]
+jgiraldonocua@gmail.com
 
 ---
 
