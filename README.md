@@ -64,7 +64,7 @@ VEKOS is an experimental operating system written in Rust that focuses on verifi
 ### Build Instructions
 
 ```bash
-# Clone the repository
+# Clone this repository
 git clone https://github.com/JGiraldo29/vekos.git
 cd vekos
 
