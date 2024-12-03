@@ -125,7 +125,7 @@ As this is an alpha release (0.0.1), there are several limitations:
 
 ## License
 
-[Add your chosen license here]
+Apache-2.0 license
 
 ## Acknowledgments
 
