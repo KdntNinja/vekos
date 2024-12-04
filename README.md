@@ -6,11 +6,11 @@
 
 VEKOS is an experimental operating system written in Rust that focuses on verification and security at its core. This is the first alpha release (v0.0.1) that demonstrates the basic architecture and key features of the system.
 
-**Watch the OS showcase by clicking on the image.**
+**Watch the OS showcase by clicking on the thumbnail**
 
-[![Watch the video](https://i9.ytimg.com/vi/U04Ct4uOCgg/mqdefault.jpg?sqp=CKyjvboG-oaymwEmCMACELQB8quKqQMa8AEB-AH-CYAC0AWKAgwIABABGBMgQCh_MA8=&rs=AOn4CLBGb1z9PbM99IFwjq3t6r1XwfdklQ)](https://youtu.be/U04Ct4uOCgg)
+[![Watch the video](https://i.ytimg.com/vi_webp/U04Ct4uOCgg/3.webp)](https://youtu.be/U04Ct4uOCgg)
 
-## Key Features
+## VEKOS Key Features
 
 - **Verified Operations**: Every filesystem and memory operation is cryptographically verified using a proof system
 - **Secure Memory Management**: Buddy allocator with memory zones and COW (Copy-On-Write) support
