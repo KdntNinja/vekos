@@ -8,7 +8,7 @@ VEKOS is an experimental operating system written in Rust that focuses on verifi
 
 **Watch the OS showcase by clicking on the thumbnail**
 
-[![Watch the video](https://i.ytimg.com/vi_webp/U04Ct4uOCgg/3.webp)](https://youtu.be/U04Ct4uOCgg)
+[![Watch the video](https://i.ytimg.com/vi_webp/U04Ct4uOCgg/3.webp)](https://youtu.be/U04Ct4uOCgg?feature=shared)
 
 ## VEKOS Key Features
 
