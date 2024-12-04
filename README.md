@@ -117,6 +117,7 @@ As this is an alpha release (0.0.1), there are several limitations:
 - Experimental verification system
 - Limited filesystem features
 - Basic shell functionality
+- Unsecure code
 
 ## Future Plans
 
@@ -135,7 +136,6 @@ Apache-2.0 license
 
 - The Rust programming language team
 - Contributors to the project
-- [Other acknowledgments]
 
 ## Contact
 
