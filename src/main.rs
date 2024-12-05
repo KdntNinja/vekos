@@ -59,6 +59,7 @@ pub mod shell;
 pub mod hash;
 pub mod page_table;
 pub mod block_cache;
+mod swap;
 mod boot_verification;
 mod elf; 
 mod tsc;

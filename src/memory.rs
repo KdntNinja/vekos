@@ -29,6 +29,7 @@ use crate::verification::{
 };
 use crate::tsc;
 use crate::hash;
+use crate::swap::SWAP_MANAGER;
 use x86_64::structures::paging::PageSize;
 use x86_64::structures::paging::FrameDeallocator;
 use crate::process::PROCESS_LIST;
@@ -576,6 +577,9 @@ pub enum MemoryError {
     ZoneValidationFailed,
     MemoryLimitExceeded,
     VerificationFailed,
+    SwapFileError,
+    NoSwapSpace,
+    InvalidSwapSlot,
 }
 
 #[derive(Debug, Clone)]
@@ -874,6 +878,55 @@ impl MemoryManager {
         reclaimed
     }
 
+    pub fn handle_swap(&mut self) -> bool {
+        let mut reclaimed = false;
+
+        if let Some(pages_to_swap) = self.find_swap_candidates() {
+            let mut swap_manager = SWAP_MANAGER.lock();
+            
+            for page in pages_to_swap {
+                if let Ok(flags) = self.page_table.translate_page(page).map(|_| 
+                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE
+                ) {
+                    if let Ok(_) = swap_manager.swap_out(page, flags, self) {
+                        reclaimed = true;
+                    }
+                }
+            }
+        }
+        
+        reclaimed
+    }
+    
+    fn find_swap_candidates(&mut self) -> Option<Vec<Page>> {
+        let mut candidates = Vec::new();
+        let process_list = PROCESS_LIST.lock();
+
+        for process in process_list.iter_processes() {
+            for allocation in &process.memory.allocations {
+                let start_page = Page::containing_address(allocation.address);
+                let pages = (allocation.size + PAGE_SIZE - 1) / PAGE_SIZE;
+                
+                for i in 0..pages {
+                    let page = start_page + i as u64;
+                    let flags = unsafe { 
+                        self.page_table.level_4_table()[page.p4_index()].flags()
+                    };
+                    
+                    if !flags.contains(PageTableFlags::ACCESSED) {
+                        candidates.push(page);
+                    }
+                }
+            }
+        }
+        
+        if candidates.is_empty() {
+            None
+        } else {
+            Some(candidates)
+        }
+    }
+
     pub fn cleanup_process_pages(&mut self, start: VirtAddr, pages: usize) -> Result<(), MemoryError> {
         let start_page = Page::containing_address(start);
         
@@ -933,7 +986,26 @@ impl MemoryManager {
             }
         }
         
+        let mut swap_manager = SWAP_MANAGER.lock();
+        if let Some(slot) = self.find_swap_slot(fault.address) {
+            return swap_manager.swap_in(slot, self).map_err(|e| MemoryError::from(e));
+        }
+        
         Err(MemoryError::InvalidAddress)
+    }
+
+    fn find_swap_slot(&self, addr: VirtAddr) -> Option<usize> {
+        let page = Page::containing_address(addr);
+        let swap_manager = SWAP_MANAGER.lock();
+        
+        for (slot, entry) in swap_manager.iter_slots() {
+            if let Some(entry) = entry {
+                if entry.page == page {
+                    return Some(slot);
+                }
+            }
+        }
+        None
     }
 
     fn load_page(&mut self, page: Page, frame: PhysFrame) -> Result<(), MemoryError> {
