@@ -726,7 +726,7 @@ impl Process {
             for i in 0..pages {
                 let page = start_page + i as u64;
                 
-                if let Ok(frame) = unsafe { memory_manager.page_table.translate_page(page) } {
+                if let Ok(frame) = memory_manager.page_table.translate_page(page) {
                     
                     let mut ref_counts = PAGE_REF_COUNTS.lock();
                     if let Some(ref_count) = ref_counts.get_mut(&frame.start_address()) {
@@ -758,7 +758,7 @@ impl Process {
             
             for i in 0..stack_pages {
                 let page = start_page + i as u64;
-                if let Ok(frame) = unsafe { memory_manager.page_table.translate_page(page) } {
+                if let Ok(frame) = memory_manager.page_table.translate_page(page) {
                     unsafe {
                         memory_manager.frame_allocator.deallocate_frame(frame);
                         let _ = memory_manager.unmap_page(page);
@@ -773,7 +773,7 @@ impl Process {
         
         for i in 0..kernel_stack_pages {
             let page = start_page + i as u64;
-            if let Ok(frame) = unsafe { memory_manager.page_table.translate_page(page) } {
+            if let Ok(frame) = memory_manager.page_table.translate_page(page) {
                 unsafe {
                     memory_manager.frame_allocator.deallocate_frame(frame);
                     let _ = memory_manager.unmap_page(page);

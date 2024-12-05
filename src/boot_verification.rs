@@ -243,7 +243,7 @@ impl BootVerification {
     pub fn verify_stage(&mut self, stage: BootStage) -> Result<(), &'static str> {
         let verification_result = match stage {
             BootStage::GDTLoaded => self.verify_gdt().map(|_| ()),
-            BootStage::IDTLoaded => unsafe { self.verify_idt().map(|_| ()) },
+            BootStage::IDTLoaded => self.verify_idt().map(|_| ()),
             BootStage::MemoryInitialized => self.verify_memory().map(|_| ()),
             BootStage::HeapInitialized => self.verify_heap().map(|_| ()),
             _ => Ok(()),

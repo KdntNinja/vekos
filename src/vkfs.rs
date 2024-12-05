@@ -762,7 +762,7 @@ impl Superblock {
         self.buffer_manager.lock().flush_all();
         
         
-        let mut registry = VERIFICATION_REGISTRY.lock();
+        let registry = VERIFICATION_REGISTRY.lock();
         if !registry.verify_chain()? {
             return Err(VerificationError::HashChainVerificationFailed);
         }
@@ -1793,7 +1793,7 @@ impl BlockAllocator {
                 let map_len = region.allocation_map.len();
                 
                 'outer: for i in 0..map_len {
-                    let mut bitmap = region.allocation_map[i].load(Ordering::SeqCst);
+                    let bitmap = region.allocation_map[i].load(Ordering::SeqCst);
                     let mut consecutive = 0;
                     let mut start_bit = 0;
                     

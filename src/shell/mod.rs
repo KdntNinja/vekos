@@ -25,7 +25,6 @@ use alloc::format;
 use crate::fs::{FILESYSTEM};
 use crate::process::PROCESS_LIST;
 use crate::syscall::KEYBOARD_BUFFER;
-use crate::fs::FileSystem;
 use core::fmt::Write;
 use crate::Process;
 use crate::fs::FsError;

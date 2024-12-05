@@ -15,15 +15,11 @@
  */
 
 use alloc::string::String;
-use core::fmt::Write;
 use alloc::vec::Vec;
 use crate::shell::ShellError;
 use crate::shell::ExitCode;
 use super::ShellResult;
-use crate::vga_buffer::WRITER;
 use crate::serial_println;
-use crate::MEMORY_MANAGER;
-use crate::Process;
 use crate::fs::FILESYSTEM;
 use crate::println;
 use crate::shell::ShellDisplay;
@@ -108,7 +104,7 @@ impl CommandExecutor {
     }
 
     fn cmd_clear(_args: &[String]) -> ShellResult {
-        let mut display = ShellDisplay::new();
+        let display = ShellDisplay::new();
         display.clear_screen();
         Ok(ExitCode::Success)
     }
@@ -163,7 +159,7 @@ impl CommandExecutor {
             .map(String::as_str)
             .unwrap_or("/");
                 
-        let mut process_list = PROCESS_LIST.lock();
+        let process_list = PROCESS_LIST.lock();
         let current_dir = process_list.current()
             .map(|p| p.current_dir.clone())
             .unwrap_or_else(|| String::from("/"));

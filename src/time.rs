@@ -200,7 +200,7 @@ pub fn init() {
     }
 
     {
-        let mut rtc = RealTimeClock::new();
+        let rtc = RealTimeClock::new();
         serial_println!("RTC created successfully");
 
         serial_println!("Time system base initialization complete");

@@ -15,7 +15,6 @@
  */
 
 use crate::{
-    print, println,
     memory::{MemoryError, MemoryZoneType, UserSpaceRegion},
     process::{Process, ProcessState, PROCESS_LIST},
     fs::{FileSystem, FILESYSTEM},
@@ -366,7 +365,7 @@ fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> u64 {
         path: String::from(path),
     };
 
-    let mut fs = FILESYSTEM.lock();
+    let fs = FILESYSTEM.lock();
     if let Err(e) = fs.verify_operation(&operation) {
         return translate_fs_error(e).into();
     }
@@ -434,7 +433,7 @@ fn sys_read(fd: usize, buffer: *mut u8, size: usize) -> u64 {
         data: Vec::new(),
     };
 
-    let mut fs = FILESYSTEM.lock();
+    let fs = FILESYSTEM.lock();
     if let Err(e) = fs.verify_operation(&operation) {
         return translate_fs_error(e).into();
     }
@@ -546,7 +545,7 @@ fn sys_write(fd: usize, buffer: *const u8, size: usize) -> u64 {
         data: slice.to_vec(),
     };
 
-    let mut fs = FILESYSTEM.lock();
+    let fs = FILESYSTEM.lock();
     if let Err(e) = fs.verify_operation(&operation) {
         return translate_fs_error(e).into();
     }
@@ -575,7 +574,7 @@ fn sys_write(fd: usize, buffer: *const u8, size: usize) -> u64 {
 }
 
 fn sys_exit(status: i32) -> u64 {
-    let mut process_list = PROCESS_LIST.lock();
+    let process_list = PROCESS_LIST.lock();
     let current_pid = match process_list.current() {
         Some(p) => p.id(),
         None => return 0,
@@ -914,7 +913,7 @@ fn init_child_memory(
     memory_manager: &mut MemoryManager,
 ) -> Result<(), MemoryError> {
     
-    let mut process_list = PROCESS_LIST.lock();
+    let process_list = PROCESS_LIST.lock();
     let parent_info = process_list.current()
         .ok_or(MemoryError::InvalidAddress)?;
     
@@ -941,7 +940,7 @@ fn init_child_memory(
         
         for i in 0..pages {
             let page = start_page + i as u64;
-            if let Ok(frame) = unsafe { memory_manager.page_table.translate_page(page) } {
+            if let Ok(frame) = memory_manager.page_table.translate_page(page) {
                 let mut ref_counts = PAGE_REF_COUNTS.lock();
                 ref_counts.entry(frame.start_address())
                     .and_modify(|e| e.count += 1)
@@ -976,7 +975,7 @@ fn cleanup_failed_fork(
         
         for i in 0..pages {
             let page = start_page + i as u64;
-            if let Ok(frame) = unsafe { memory_manager.page_table.translate_page(page) } {
+            if let Ok(frame) = memory_manager.page_table.translate_page(page) {
                 
                 let mut ref_counts = PAGE_REF_COUNTS.lock();
                 if let Some(ref_count) = ref_counts.get_mut(&frame.start_address()) {
@@ -1187,7 +1186,7 @@ fn sys_vkfs_create(path_ptr: *const u8, path_len: usize) -> u64 {
         path: String::from(path),
     };
 
-    let mut fs = FILESYSTEM.lock();
+    let fs = FILESYSTEM.lock();
     match fs.verify_operation(&operation) {
         Ok(proof) => {
             VERIFICATION_REGISTRY.lock().register_proof(proof);
@@ -1214,7 +1213,7 @@ fn sys_vkfs_delete(path_ptr: *const u8, path_len: usize) -> u64 {
         path: String::from(path),
     };
 
-    let mut fs = FILESYSTEM.lock();
+    let fs = FILESYSTEM.lock();
     match fs.verify_operation(&operation) {
         Ok(proof) => {
             VERIFICATION_REGISTRY.lock().register_proof(proof);

@@ -15,7 +15,6 @@
  */
 
 use crate::vga_buffer::{WRITER, Color, ColorCode};
-use crate::println;
 use core::fmt::Write;
 
 pub struct BootSplash;
@@ -29,7 +28,7 @@ impl BootSplash {
 
         writer.color_code = ColorCode::new(Color::White, Color::Black);
         writer.write_str("\n                 Verified Experimental Kernel Operating System\n").unwrap();
-        writer.write_str("                                  Version 0.0.1-alpha\n\n").unwrap();
+        writer.write_str("                               Version 0.0.1-alpha\n\n").unwrap();
 
         writer.color_code = ColorCode::new(Color::LightGray, Color::Black);
         writer.write_str("                        Developed by Juan Miguel Giraldo\n\n").unwrap();

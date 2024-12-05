@@ -350,7 +350,7 @@ impl MemoryZone {
                 serial_println!("Found free block of order {} at {:?}", current_order, frame.start_address());
                 
                 
-                let mut current_frame = frame;
+                let current_frame = frame;
                 let mut current_order = current_order;
                 
                 while current_order > order {
@@ -879,7 +879,7 @@ impl MemoryManager {
         
         for i in 0..pages {
             let page = start_page + i as u64;
-            if let Ok(frame) = unsafe { self.page_table.translate_page(page) } {
+            if let Ok(frame) = self.page_table.translate_page(page) {
                 unsafe {
                     self.frame_allocator.deallocate_frame(frame);
                     let _ = self.unmap_page(page);
@@ -924,7 +924,7 @@ impl MemoryManager {
     pub fn handle_page_fault(&mut self, fault: PageFault) -> Result<(), MemoryError> {
         let page = Page::containing_address(fault.address);
         
-        if let Ok(frame) = unsafe { self.page_table.translate_page(page) } {
+        if let Ok(frame) = self.page_table.translate_page(page) {
             let flags = self.page_table.level_4_table()[page.p4_index()].flags();
             
             if !flags.contains(PageTableFlags::PRESENT) {
@@ -1022,30 +1022,21 @@ impl MemoryManager {
     }
 
     fn set_cow_flag(&mut self, page: Page) -> Result<(), MemoryError> {
-        let flags = unsafe { 
-            self.page_table.level_4_table()[page.p4_index()].flags()
-        };
-        
+        let flags = self.page_table.level_4_table()[page.p4_index()].flags();
         let new_flags = (flags.bits() | COW_FLAG_MASK) as u64;
-        unsafe {
-            self.page_table.level_4_table()[page.p4_index()].set_flags(
-                PageTableFlags::from_bits_truncate(new_flags)
-            );
-        }
+        self.page_table.level_4_table()[page.p4_index()].set_flags(
+            PageTableFlags::from_bits_truncate(new_flags)
+        );
         Ok(())
     }
 
     fn clear_cow_flag(&mut self, page: Page) -> Result<(), MemoryError> {
-        let flags = unsafe { 
-            self.page_table.level_4_table()[page.p4_index()].flags()
-        };
+        let flags = self.page_table.level_4_table()[page.p4_index()].flags();
         
         let new_flags = (flags.bits() & !COW_FLAG_MASK) as u64;
-        unsafe {
-            self.page_table.level_4_table()[page.p4_index()].set_flags(
-                PageTableFlags::from_bits_truncate(new_flags)
-            );
-        }
+        self.page_table.level_4_table()[page.p4_index()].set_flags(
+            PageTableFlags::from_bits_truncate(new_flags)
+        );
         Ok(())
     }
 
@@ -1053,7 +1044,7 @@ impl MemoryManager {
         let page = Page::containing_address(addr);
         
         
-        let (frame, flags) = unsafe {
+        let (frame, flags) = {
             let frame = self.page_table.translate_page(page)
                 .map_err(|_| MemoryError::InvalidAddress)?;
                     
@@ -1253,7 +1244,7 @@ impl MemoryManager {
     }
 
     pub fn init_zone(&mut self, zone_type: MemoryZoneType) -> Result<(), MemoryError> {
-        if !unsafe { ALLOCATOR.lock().initialized } {
+        if !ALLOCATOR.lock().initialized {
             serial_println!("Warning: Attempting to initialize zone before allocator initialization");
             return Err(MemoryError::FrameAllocationFailed);
         }
@@ -1427,7 +1418,7 @@ impl MemoryManager {
         
         
         let l4_addr = {
-            let l4_table = unsafe { &mut *self.page_table.level_4_table() };
+            let l4_table = &mut *self.page_table.level_4_table();
             let l4_index = page.p4_index();
             l4_table[l4_index].addr()
         };
@@ -1460,9 +1451,7 @@ impl MemoryManager {
                     l1_table[l1_index].set_addr(frame.start_address(), flags);
                     cache.mark_dirty(frame);
                     
-                    unsafe {
-                        x86_64::instructions::tlb::flush(page.start_address());
-                    }
+                    x86_64::instructions::tlb::flush(page.start_address());
                     
                     return Ok(());
                 }

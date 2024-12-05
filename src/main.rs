@@ -199,7 +199,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     BootSplash::print_boot_message("Initializing filesystem...", BootMessageType::Info);
     fs::init();
-    let mut proof_storage = proof_storage::PROOF_STORAGE.lock();
+    let proof_storage = proof_storage::PROOF_STORAGE.lock();
     drop(proof_storage);
     BootSplash::print_boot_message("Filesystem initialization complete", BootMessageType::Success);
     

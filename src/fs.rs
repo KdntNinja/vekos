@@ -24,7 +24,6 @@ use crate::Hash;
 use crate::OperationProof;
 use crate::verification::FSProof;
 use crate::verification::ProofData;
-use crate::vkfs::DirEntry;
 use crate::serial_println;
 use crate::verification::FSOpType;
 use crate::verification::VERIFICATION_REGISTRY;
@@ -642,7 +641,7 @@ impl InMemoryFs {
     }
     
     pub fn remove_directory(&mut self, path: &str) -> Result<(), FsError> {
-        let mut fs = FILESYSTEM.lock();
+        let fs = FILESYSTEM.lock();
         
         
         let parent_path = path.rfind('/')
@@ -704,7 +703,7 @@ impl InMemoryFs {
     }
 
     pub fn rename_directory(&mut self, old_path: &str, new_path: &str) -> Result<(), FsError> {
-        let mut fs = FILESYSTEM.lock();
+        let fs = FILESYSTEM.lock();
         let old_parent = old_path.rfind('/').map(|pos| &old_path[..pos]).unwrap_or("");
         
         if let Err(e) = fs.superblock.verify_tree_consistency() {
@@ -875,7 +874,7 @@ impl InMemoryFs {
                             components.extend(pending_components.drain(..));
                             
                             
-                            let mut target_components: Vec<String> = target.split('/')
+                            let target_components: Vec<String> = target.split('/')
                                 .filter(|s| !s.is_empty())
                                 .map(String::from)
                                 .collect();
@@ -1311,7 +1310,7 @@ impl FileSystem for InMemoryFs {
     }
 
     fn write_file(&mut self, path: &str, contents: &[u8]) -> Result<(), FsError> {
-        let mut fs = FILESYSTEM.lock();
+        let fs = FILESYSTEM.lock();
         if let Err(e) = fs.superblock.verify_tree_consistency() {
             return Err(FsError::FileSystemError);
         }

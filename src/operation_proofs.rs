@@ -118,7 +118,7 @@ impl ProofVerifier for Superblock {
         match &proof.data {
             ProofData::Filesystem(fs_proof) => {
                 
-                let mut current_hash = fs_proof.prev_state;
+                let current_hash = fs_proof.prev_state;
                 
                 
                 let operation_hash = match fs_proof.operation {
