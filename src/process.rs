@@ -29,6 +29,7 @@ use x86_64::{
 use crate::println;
 use crate::MEMORY_MANAGER;
 use crate::tsc;
+use crate::memory::SWAPPED_PAGES;
 use crate::verification::{Hash, OperationProof, Verifiable, VerificationError, Operation, ProcessOpType, ProofData, ProcessProof};
 use crate::hash;
 use crate::verification::VERIFICATION_REGISTRY;
@@ -719,6 +720,14 @@ impl Process {
 
     pub fn cleanup(&mut self, memory_manager: &mut MemoryManager) -> Result<(), MemoryError> {
         
+        let mut swapped_pages = SWAPPED_PAGES.lock();
+        swapped_pages.retain(|addr, _| {
+            !self.memory.allocations.iter().any(|alloc| {
+                addr >= &alloc.address && 
+                addr < &(alloc.address + alloc.size)
+            })
+        });
+
         for allocation in self.memory.allocations.drain(..) {
             let pages = (allocation.size + 4095) / 4096;
             let start_page = Page::containing_address(allocation.address);

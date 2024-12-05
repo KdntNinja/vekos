@@ -19,6 +19,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use core::alloc::Layout;
 use crate::buddy_allocator::LockedBuddyAllocator;
 use crate::MEMORY_MANAGER;
+use crate::swap::DISK_IO;
 use x86_64::{
     structures::paging::{
         mapper::MapToError, FrameAllocator, Mapper, Page, PageTableFlags, Size4KiB,
@@ -53,19 +54,16 @@ fn alloc_error_handler(layout: Layout) -> ! {
     {
         let mut mm_lock = MEMORY_MANAGER.lock();
         if let Some(mm) = mm_lock.as_mut() {
-            
-            mm.page_table_cache.lock().evict_one();
-            
             if mm.handle_memory_pressure() {
-                
-                IN_OOM_HANDLER.store(false, Ordering::SeqCst);
-                
-                
-                unsafe {
-                    let ptr = alloc::alloc::alloc(layout);
-                    if !ptr.is_null() {
-                        serial_println!("OOM: Memory reclaimed successfully, allocation retry succeeded");
-                        loop {} 
+                if let Ok(()) = DISK_IO.lock().sync() {
+                    IN_OOM_HANDLER.store(false, Ordering::SeqCst);
+                    
+                    unsafe {
+                        let ptr = alloc::alloc::alloc(layout);
+                        if !ptr.is_null() {
+                            serial_println!("OOM: Memory reclaimed successfully, allocation retry succeeded");
+                            loop {} 
+                        }
                     }
                 }
             }

@@ -20,9 +20,12 @@ use x86_64::{
     },
     PhysAddr,
 };
+use crate::serial_println;
+use crate::VirtAddr;
+use crate::swap::DISK_IO;
 use alloc::collections::BTreeMap;
+use crate::memory::SWAPPED_PAGES;
 use core::sync::atomic::{AtomicU64, Ordering};
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CacheEntryStatus {
@@ -142,12 +145,15 @@ impl PageTableCache {
     }
 
     pub fn evict_one(&mut self) {
-        
         if let Some((&addr, entry)) = self.entries
             .iter()
             .min_by_key(|(_, entry)| entry.last_access)
         {
-            
+            let mut swapped_pages = SWAPPED_PAGES.lock();
+            if swapped_pages.contains_key(&VirtAddr::new(addr.as_u64())) {
+                return;
+            }
+
             if entry.status == CacheEntryStatus::Dirty {
                 
                 unsafe {
@@ -161,9 +167,12 @@ impl PageTableCache {
     }
 
     unsafe fn flush_page_table(&self, _phys_addr: PhysAddr) {
-        
         core::arch::asm!("mfence");
         x86_64::instructions::tlb::flush_all();
+
+        if let Err(_) = DISK_IO.lock().sync() {
+            serial_println!("Warning: Failed to sync page table to disk");
+        }
     }
 
     pub fn mark_dirty(&mut self, frame: PhysFrame) {

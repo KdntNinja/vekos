@@ -330,6 +330,7 @@ pub trait FileSystem {
     fn remove_directory(&mut self, path: &str) -> Result<(), FsError>;
     fn stat(&mut self, path: &str) -> Result<FileStats, FsError>;
     fn list_directory(&mut self, path: &str) -> Result<Vec<String>, FsError>;
+    fn sync(&mut self) -> Result<(), FsError>;
 }
 
 pub trait VerifiedFileSystem: FileSystem {
@@ -1046,6 +1047,12 @@ impl InMemoryFs {
         }
     }
 
+    pub fn sync(&mut self) -> Result<(), FsError> {
+        let mut cache = self.superblock.block_cache.lock();
+        cache.flush();
+        Ok(())
+    }
+
     pub fn execute_verified_operation(&mut self, op: &FSOperation) -> Result<OperationProof, VerificationError> {
         
         let prev_state = self.state_hash();
@@ -1251,6 +1258,10 @@ impl FileSystem for InMemoryFs {
         });
 
         Ok(())
+    }
+
+    fn sync(&mut self) -> Result<(), FsError> {
+        self.sync()
     }
 
     fn create_directory(&mut self, path: &str, permissions: FilePermissions) -> Result<(), FsError> {

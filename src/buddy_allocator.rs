@@ -20,6 +20,7 @@ use core::marker::PhantomData;
 use core::ptr::NonNull;
 use crate::process::PROCESS_LIST;
 use crate::memory::MemoryZoneType;
+use crate::memory::SWAPPED_PAGES;
 use spin::Mutex;
 use x86_64::VirtAddr;
 
@@ -366,6 +367,11 @@ unsafe impl GlobalAlloc for LockedBuddyAllocator {
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
         let mut allocator = self.0.lock();
         if !ptr.is_null() {
+            let addr = VirtAddr::new(ptr as u64);
+            let mut swapped_pages = SWAPPED_PAGES.lock();
+            if swapped_pages.contains_key(&addr) {
+                swapped_pages.remove(&addr);
+            }
             allocator.deallocate(NonNull::new_unchecked(ptr), layout);
         }
     }

@@ -35,6 +35,7 @@ use x86_64::structures::paging::FrameDeallocator;
 use crate::process::PROCESS_LIST;
 use x86_64::structures::idt::PageFaultErrorCode;
 use crate::LARGE_PAGE_THRESHOLD;
+use crate::swap::DISK_IO;
 use crate::page_table::PageTableVerifier;
 use crate::ALLOCATOR;
 use crate::page_table_cache::PageTableCache;
@@ -85,6 +86,18 @@ struct Zone {
     free_pages: usize,
     total_pages: usize,
     free_lists: [Option<PhysFrame>; MAX_ORDER + 1],
+}
+
+#[derive(Debug, Clone)]
+pub struct SwapPageInfo {
+    pub swap_slot: usize,
+    pub flags: PageTableFlags,
+    pub last_access: u64,
+    pub reference_count: usize,
+}
+
+lazy_static! {
+    pub static ref SWAPPED_PAGES: Mutex<BTreeMap<VirtAddr, SwapPageInfo>> = Mutex::new(BTreeMap::new());
 }
 
 impl Zone {
@@ -977,6 +990,23 @@ impl MemoryManager {
     pub fn handle_page_fault(&mut self, fault: PageFault) -> Result<(), MemoryError> {
         let page = Page::containing_address(fault.address);
         
+        let mut swapped_pages = SWAPPED_PAGES.lock();
+        if let Some(swap_info) = swapped_pages.get(&fault.address) {
+            let mut swap_manager = SWAP_MANAGER.lock();
+            match swap_manager.swap_in(swap_info.swap_slot, self) {
+                Ok(()) => {
+                    if let Ok(frame) = self.page_table.translate_page(page) {
+                        unsafe {
+                            self.map_page(page, frame, swap_info.flags)?;
+                        }
+                    }
+                    swapped_pages.remove(&fault.address);
+                    return Ok(());
+                },
+                Err(e) => return Err(e),
+            }
+        }
+
         if let Ok(frame) = self.page_table.translate_page(page) {
             let flags = self.page_table.level_4_table()[page.p4_index()].flags();
             
@@ -988,7 +1018,16 @@ impl MemoryManager {
         
         let mut swap_manager = SWAP_MANAGER.lock();
         if let Some(slot) = self.find_swap_slot(fault.address) {
-            return swap_manager.swap_in(slot, self).map_err(|e| MemoryError::from(e));
+            let mut swap_manager = SWAP_MANAGER.lock();
+            match swap_manager.swap_in(slot, self) {
+                Ok(()) => {
+                    if let Ok(()) = DISK_IO.lock().sync() {
+                        return Ok(());
+                    }
+                    return Err(MemoryError::SwapFileError);
+                },
+                Err(e) => return Err(MemoryError::from(e)),
+            }
         }
         
         Err(MemoryError::InvalidAddress)
@@ -1960,6 +1999,12 @@ impl BootInfoFrameAllocator {
         }
         
         (used, total)
+    }
+}
+
+impl From<&str> for MemoryError {
+    fn from(error: &str) -> Self {
+        MemoryError::SwapFileError
     }
 }
 
