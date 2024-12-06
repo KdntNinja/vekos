@@ -319,46 +319,41 @@ impl VerificationRegistry {
     }
 
     pub fn verify_proof(&self, proof: &OperationProof) -> Result<bool, VerificationError> {
-        
-        let verifier = CRYPTO_VERIFIER.lock();
-        
-        
         let mut verification_data = Vec::new();
         verification_data.extend_from_slice(&proof.op_id.to_ne_bytes());
         verification_data.extend_from_slice(&proof.prev_state.0.to_ne_bytes());
         verification_data.extend_from_slice(&proof.new_state.0.to_ne_bytes());
         
-        
         match &proof.data {
             ProofData::Memory(mem_proof) => {
-                verification_data.extend_from_slice(&[0]); 
+                verification_data.extend_from_slice(&[0]);
                 verification_data.extend_from_slice(&(mem_proof.address.as_u64().to_ne_bytes()));
                 verification_data.extend_from_slice(&(mem_proof.size.to_ne_bytes()));
                 verification_data.extend_from_slice(&(mem_proof.frame_hash.0.to_ne_bytes()));
             },
             ProofData::Filesystem(fs_proof) => {
-                verification_data.extend_from_slice(&[1]); 
+                verification_data.extend_from_slice(&[1]);
                 verification_data.extend_from_slice(fs_proof.path.as_bytes());
                 verification_data.extend_from_slice(&fs_proof.content_hash.0.to_ne_bytes());
             },
             ProofData::Process(proc_proof) => {
-                verification_data.extend_from_slice(&[2]); 
+                verification_data.extend_from_slice(&[2]);
                 verification_data.extend_from_slice(&proc_proof.pid.to_ne_bytes());
                 verification_data.extend_from_slice(&proc_proof.state_hash.0.to_ne_bytes());
             },
             ProofData::Boot(boot_proof) => {
-                verification_data.extend_from_slice(&[3]); 
+                verification_data.extend_from_slice(&[3]);
                 verification_data.extend_from_slice(&boot_proof.stage_hash.0.to_ne_bytes());
             },
         }
-    
+
+        let verifier = CRYPTO_VERIFIER.lock();
         if !verifier.verify_signature(&verification_data, &proof.signature) {
             return Err(VerificationError::InvalidSignature);
         }
-    
+
         Ok(true)
     }
-    
 
     pub fn register_proof(&mut self, proof: OperationProof) {
         
