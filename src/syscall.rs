@@ -31,9 +31,12 @@ use x86_64::{
 
 use x86_64::instructions::interrupts;
 use crate::fs::VerifiedFileSystem;
+use crate::DRAWING_STATE;
 use crate::process::SessionId;
+use crate::FRAMEBUFFER;
 use crate::process::Session;
 use crate::fs::FSOperation;
+use crate::PALETTE_COLORS;
 use crate::serial_println;
 use crate::VERIFICATION_REGISTRY;
 use crate::memory::PAGE_REF_COUNTS;
@@ -146,6 +149,9 @@ pub enum SyscallNumber {
     VkfsRead = 31,
     VkfsWrite = 32,
     VkfsVerify = 33,
+    DrawPixel = 34,
+    DrawRect = 35,
+    SetColor = 36,
 }
 
 impl From<SyscallError> for u64 {
@@ -163,6 +169,7 @@ impl From<SyscallError> for u64 {
             SyscallError::NotFound => 10,
             SyscallError::FileSystemError => 11,
             SyscallError::InvalidState => 12,
+            SyscallError::InvalidOperation => 13,
         }
     }
 }
@@ -181,6 +188,7 @@ pub enum SyscallError {
     NotFound,
     FileSystemError,
     InvalidState,
+    InvalidOperation,
 }
 
 #[derive(Debug, Clone)]
@@ -384,6 +392,41 @@ fn sys_open(path_ptr: *const u8, path_len: usize, flags: u32) -> u64 {
             fd as u64
         },
         Err(e) => translate_fs_error(e).into(),
+    }
+}
+
+fn sys_draw_pixel(x: u32, y: u32) -> u64 {
+    let mut framebuffer = FRAMEBUFFER.lock();
+    if let Some(fb) = framebuffer.as_mut() {
+        let color = DRAWING_STATE.lock().current_color;
+        match fb.draw_pixel_verified(x, y, color) {
+            Ok(hash) => hash.0,
+            Err(_) => SyscallError::InvalidOperation.into(),
+        }
+    } else {
+        SyscallError::InvalidOperation.into()
+    }
+}
+
+fn sys_draw_rect(x: u32, y: u32, width: u32, height: u32) -> u64 {
+    let mut framebuffer = FRAMEBUFFER.lock();
+    if let Some(fb) = framebuffer.as_mut() {
+        let color = DRAWING_STATE.lock().current_color;
+        match fb.fill_rect_verified(x, y, width, height, color) {
+            Ok(hash) => hash.0,
+            Err(_) => SyscallError::InvalidOperation.into(),
+        }
+    } else {
+        SyscallError::InvalidOperation.into()
+    }
+}
+
+fn sys_set_color(color_index: u32) -> u64 {
+    if (color_index as usize) < PALETTE_COLORS.len() {
+        DRAWING_STATE.lock().current_color = PALETTE_COLORS[color_index as usize];
+        0
+    } else {
+        SyscallError::InvalidArgument.into()
     }
 }
 
@@ -1279,6 +1322,9 @@ extern "C" fn handle_syscall(regs: &mut SyscallRegisters) -> u64 {
         31 => sys_read(regs.rdi as usize, regs.rsi as *mut u8, regs.rdx as usize),
         32 => sys_write(regs.rdi as usize, regs.rsi as *const u8, regs.rdx as usize),
         33 => sys_vkfs_verify(regs.rdi as *const u8, regs.rsi as usize),
+        34 => sys_draw_pixel(regs.rdi as u32, regs.rsi as u32),
+        35 => sys_draw_rect(regs.rdi as u32, regs.rsi as u32, regs.rdx as u32, regs.r8 as u32),
+        36 => sys_set_color(regs.rdi as u32),
         _ => u64::from(SyscallError::InvalidSyscall),
     }
 }

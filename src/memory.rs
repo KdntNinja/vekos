@@ -593,6 +593,9 @@ pub enum MemoryError {
     SwapFileError,
     NoSwapSpace,
     InvalidSwapSlot,
+    VramAllocationFailed,
+    VramVerificationFailed,
+    VramInvalidBlock,
 }
 
 #[derive(Debug, Clone)]
@@ -1696,6 +1699,10 @@ impl From<VerificationError> for MemoryError {
             VerificationError::HashChainVerificationFailed => MemoryError::VerificationFailed,
             VerificationError::InvalidHashChain => MemoryError::VerificationFailed,
             VerificationError::InconsistentMerkleTree => MemoryError::VerificationFailed,
+            VerificationError::InvalidHash => MemoryError::VramVerificationFailed,
+            VerificationError::InvalidProof => MemoryError::VramVerificationFailed,
+            VerificationError::InvalidState => MemoryError::VramInvalidBlock,
+            _ => MemoryError::VerificationFailed,
         }
     }
 }

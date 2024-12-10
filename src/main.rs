@@ -58,6 +58,7 @@ pub mod inode_cache;
 pub mod shell;
 pub mod hash;
 pub mod page_table;
+pub mod framebuffer;
 pub mod block_cache;
 mod swap;
 mod boot_verification;
@@ -95,6 +96,37 @@ const LARGE_PAGE_THRESHOLD: usize = 512;
 
 lazy_static! {
     static ref SCHEDULER: Mutex<Option<Scheduler>> = Mutex::new(None);
+}
+
+lazy_static! {
+    pub static ref FRAMEBUFFER: Mutex<Option<framebuffer::Framebuffer>> = Mutex::new(None);
+}
+
+pub const PALETTE_COLORS: [u32; 16] = [
+    0xFF000000, 0xFFFF0000, 0xFF00FF00, 0xFF0000FF,
+    0xFFFFFF00, 0xFFFF00FF, 0xFF00FFFF, 0xFFFFFFFF,
+    0xFF808080, 0xFF800000, 0xFF008000, 0xFF000080,
+    0xFF808000, 0xFF800080, 0xFF008080, 0xFFC0C0C0,
+];
+
+pub struct DrawingState {
+    current_color: u32,
+    last_x: Option<u32>,
+    last_y: Option<u32>,
+}
+
+impl DrawingState {
+    pub fn new() -> Self {
+        Self {
+            current_color: PALETTE_COLORS[0],
+            last_x: None,
+            last_y: None,
+        }
+    }
+}
+
+lazy_static! {
+    pub static ref DRAWING_STATE: Mutex<DrawingState> = Mutex::new(DrawingState::new());
 }
 
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
@@ -232,6 +264,41 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
     }
     BootSplash::print_boot_message("Initial process complete", BootMessageType::Success);
+
+    serial_println!("Starting framebuffer initialization...");
+    let framebuffer_info = framebuffer::FramebufferInfo {
+        width: 800,
+        height: 600,
+        pitch: 800 * 4,
+        bpp: 32,
+        memory_model: 1,
+        red_mask_size: 8,
+        red_mask_pos: 16,
+        green_mask_size: 8,
+        green_mask_pos: 8,
+        blue_mask_size: 8,
+        blue_mask_pos: 0,
+    };
+
+    let physical_buffer = 0xfd000000;
+    let mut mm_lock = MEMORY_MANAGER.lock();
+    if let Some(ref mut mm) = *mm_lock {
+        serial_println!("Mapping framebuffer memory...");
+        match framebuffer::Framebuffer::new(framebuffer_info, physical_buffer, mm) {
+            Ok(fb) => {
+                serial_println!("Framebuffer mapping was successful");
+                FRAMEBUFFER.lock().replace(fb);
+                BootSplash::print_boot_message("Framebuffer initialization complete", BootMessageType::Success);
+            },
+            Err(e) => {
+                serial_println!("Failed to initialize framebuffer: {:?}", e);
+                BootSplash::print_boot_message("Framebuffer initialization failed!", BootMessageType::Error);
+            }
+        }
+    } else {
+        serial_println!("Memory manager unavailable for framebuffer initialization");
+    }
+    drop(mm_lock);
 
     BootSplash::print_boot_message("VEKOS initialization complete", BootMessageType::Success);
 
