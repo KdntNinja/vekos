@@ -1095,8 +1095,7 @@ fn sys_exec(program_ptr: *const u8) -> u64 {
     if let Some(elf_analyzer) = ElfLoader::new(elf_data).ok() {
         serial_println!("ELF Analysis:");
         serial_println!("Entry point: {:#x}", elf_analyzer.entry_point().as_u64());
-        
-        // Handle Result explicitly without trying to iterate over unit
+
         if let Ok(_) = elf_analyzer.validate_segments() {
             if let Ok(segments) = elf_loader.program_headers() {
                 for (i, segment) in segments.iter().enumerate() {
@@ -1130,8 +1129,7 @@ fn sys_exec(program_ptr: *const u8) -> u64 {
                 let loaded_addr = entry_point.as_u64();
                 serial_println!("\nExecution Debug:");
                 serial_println!("Entry point mapped at: {:#x}", loaded_addr);
-        
-                // Verify page permissions
+
                 let page = Page::<Size4KiB>::containing_address(VirtAddr::new(loaded_addr));;
                 match memory_manager.page_table.translate_page(page) {
                     Ok(frame) => {
@@ -1155,8 +1153,7 @@ fn sys_exec(program_ptr: *const u8) -> u64 {
                         return SyscallError::MemoryError(MemoryError::InvalidAddress).into();
                     }
                 };
-        
-                // Verify the loaded code
+
                 unsafe {
                     let code_bytes = core::slice::from_raw_parts(loaded_addr as *const u8, 16);
                     serial_println!("First 16 bytes at entry point:");

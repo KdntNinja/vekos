@@ -82,11 +82,10 @@ impl CommandExecutor {
 
     fn execute_external(&self, command: &str, args: &[String]) -> ShellResult {
         let mut fs = FILESYSTEM.lock();
-        // Check both /bin and /usr/bin
         let command_paths = [
             format!("/bin/{}", command),
             format!("/usr/bin/{}", command),
-            format!("/programs/{}", command)  // Add this line
+            format!("/programs/{}", command)
         ];
         
         for command_path in command_paths.iter() {
@@ -99,15 +98,13 @@ impl CommandExecutor {
                     let data = fs.read_file(command_path)
                         .map_err(|_| ShellError::ExecutionFailed)?;
                     
-                    drop(fs); // Release filesystem lock before executing
+                    drop(fs);
     
                     let mut process_list = PROCESS_LIST.lock();
                     if let Some(current) = process_list.current() {
                         let mut mm_lock = MEMORY_MANAGER.lock();
                         if let Some(mm) = mm_lock.as_mut() {
-                            // Create new process from the executable
                             if let Ok(mut process) = Process::new(mm) {
-                                // Get the raw address value instead of VirtAddr
                                 process.set_instruction_pointer(data.as_ptr() as u64);
                                 process.set_state(ProcessState::Ready);
                                 process_list.add(process)

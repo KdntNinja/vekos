@@ -264,17 +264,14 @@ impl ElfLoader {
             return Err(MemoryError::InvalidAddress);
         }
 
-        // Add size validation
-        if mem_size > 16 * 1024 * 1024 { // 16MB max segment size
+        if mem_size > 16 * 1024 * 1024 {
             return Err(MemoryError::MemoryLimitExceeded);
         }
 
-        // Calculate actual number of pages needed
         let start_page = Page::containing_address(VirtAddr::new(ph.vaddr));
         let end_page = Page::containing_address(VirtAddr::new(ph.vaddr + mem_size as u64 - 1));
         let page_range = Page::range_inclusive(start_page, end_page);
 
-        // Create proper flags based on ELF segment permissions
         let mut flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE;
         if ph.flags & 0x2 != 0 {
             flags |= PageTableFlags::WRITABLE;
@@ -283,18 +280,15 @@ impl ElfLoader {
             flags |= PageTableFlags::NO_EXECUTE;
         }
 
-        // Validate page alignment 
         if ph.align > 0 && (ph.vaddr % ph.align != 0 || ph.offset % ph.align != 0) {
             return Err(MemoryError::InvalidAlignment);
         }
 
-        // Verify addresses are in valid user space
         if ph.vaddr >= 0xffff_8000_0000_0000 {
             return Err(MemoryError::InvalidPermissions);
         }
 
         for page in page_range {
-            // Add validation that the page address is valid
             if page.start_address().as_u64() >= 0xffff_8000_0000_0000 {
                 serial_println!("Invalid page address: {:#x}", page.start_address().as_u64());
                 return Err(MemoryError::InvalidAddress);
@@ -311,7 +305,6 @@ impl ElfLoader {
                 flags);
 
             unsafe {
-                // First map the page
                 match memory_manager.map_page(page, frame, flags) {
                     Ok(_) => serial_println!("Successfully mapped page {:#x}", page.start_address().as_u64()),
                     Err(e) => {
@@ -321,30 +314,26 @@ impl ElfLoader {
                     }
                 }
 
-                // Calculate offset into this page
                 let page_base = page.start_address().as_u64() as usize;
                 let page_offset = page_base - ph.vaddr as usize;
-                
-                // Only copy data if we're in the initialized part
+
                 if page_offset < file_size {
                     let start = file_offset + page_offset;
                     let count = core::cmp::min(
                         Page::<Size4KiB>::SIZE as usize,
                         file_size - page_offset
                     );
-        
-                    // Add this validation right before the copy
+
                     if start + count > self.binary.len() {
                         return Err(MemoryError::InvalidAddress);
                     }
-        
-                    // Replace this copy block
+
                     core::ptr::copy_nonoverlapping(
                         self.binary.as_ptr().add(start),
                         page_base as *mut u8,
                         count
                     );
-                    // With this corrected version
+
                     let dest_addr = memory_manager.phys_to_virt(frame.start_address()).as_mut_ptr::<u8>();
                     core::ptr::copy_nonoverlapping(
                         self.binary.as_ptr().add(start),
@@ -353,7 +342,6 @@ impl ElfLoader {
                     );
                 }
 
-                // Zero remaining page memory if needed
                 if page_offset < mem_size {
                     let zero_start = if page_offset < file_size {
                         page_base + core::cmp::min(

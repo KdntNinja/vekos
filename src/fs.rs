@@ -468,7 +468,7 @@ pub struct InMemoryFs {
     root: Inode,
     fs_hash: AtomicU64,
     pub superblock: Superblock,
-    initialized: AtomicBool, // Add this field
+    initialized: AtomicBool,
 }
 
 impl InMemoryFs {
@@ -550,14 +550,12 @@ impl InMemoryFs {
 
         serial_println!("Initializing directory structure");
 
-        // Create a local copy of permissions to avoid lock contention
         let dir_permissions = FilePermissions {
             read: true,
             write: true,
             execute: true,
         };
 
-        // Create base directories in a single batch
         for dir in &["/bin", "/home", "/tmp", "/usr", "/dev", "/etc", "/programs"] {
             match self.create_directory(dir, dir_permissions) {
                 Ok(_) => serial_println!("Created directory {}", dir),
@@ -568,7 +566,6 @@ impl InMemoryFs {
             }
         }
 
-        // Create subdirectories after parent directories are confirmed
         for dir in &["/usr/bin", "/usr/lib"] {
             match self.create_directory(dir, dir_permissions) {
                 Ok(_) => serial_println!("Created directory {}", dir),
@@ -579,7 +576,6 @@ impl InMemoryFs {
             }
         }
 
-        // Create the mode7test file in a separate operation
         let exec_permissions = FilePermissions {
             read: true,
             write: false,
@@ -1415,8 +1411,7 @@ impl FileSystem for InMemoryFs {
                 return Err(e);
             }
         };
-        
-        // Update file contents
+
         inode.data.data = contents.to_vec();
         inode.data.stats.size = contents.len();
         inode.data.stats.modified = FileTime::now();
@@ -1538,31 +1533,26 @@ lazy_static! {
 }
 
 pub fn init() {
-    // Use a separate scope to limit the lock duration
     {
         let fs = FILESYSTEM.lock();
         if fs.is_initialized() {
             return;
         }
-    } // Lock is released here
+    }
 
-    // Get a new lock for initialization
     let mut fs = FILESYSTEM.lock();
-    if fs.is_initialized() { // Double-check pattern
+    if fs.is_initialized() {
         return;
     }
 
     serial_println!("Starting filesystem initialization...");
 
-    // Use a try_lock pattern for internal operations to prevent deadlock
     if let Err(e) = fs.init_directory_structure() {
         serial_println!("Failed to create directory structure: {:?}", e);
     }
 
-    // Mark as initialized first
     fs.initialized.store(true, Ordering::SeqCst);
 
-    // Verify the initialization worked
     if let Ok(entries) = fs.list_directory("/") {
         serial_println!("Root directory contents successfully verified:");
         for entry in entries {

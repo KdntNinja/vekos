@@ -526,8 +526,7 @@ impl Shell {
                     let mut process_list = PROCESS_LIST.lock();
                     process_list.debug_process_list();
                     serial_println!("Shell: Process list state: {} processes", process_list.processes.len());
-                    
-                    // Check current process explicitly
+
                     if let Some(current) = process_list.current() {
                         serial_println!("Shell: Found current process: PID={}", current.id().0);
                     } else {
@@ -547,8 +546,7 @@ impl Shell {
                                         if let Some(stack_top) = process.user_stack_top() {
                                             process.set_stack_pointer(stack_top.as_u64());
                                             serial_println!("Shell: Set up stack pointer to {:#x}", stack_top.as_u64());
-                                            
-                                            // Add Size4KiB type annotation
+
                                             let stack_page = Page::<Size4KiB>::containing_address(stack_top);
                                             if let Ok(_) = mm.page_table.translate_page(stack_page) {
                                                 serial_println!("Shell: Stack page verified as mapped");
@@ -589,14 +587,12 @@ impl Shell {
                         },
                         None => {
                             serial_println!("Shell: No current process found - attempting to create initial process");
-                            // Try to create an initial process if none exists
                             let mut mm_lock = MEMORY_MANAGER.lock();
                             if let Some(mm) = mm_lock.as_mut() {
                                 match Process::new(mm) {
                                     Ok(init_process) => {
                                         serial_println!("Shell: Created initial process");
                                         process_list.add(init_process)?;
-                                        // Retry the command execution
                                         drop(process_list);
                                         return self.execute_command(command, args);
                                     },

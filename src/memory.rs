@@ -1362,8 +1362,7 @@ impl MemoryManager {
                     
                 unsafe {
                     self.map_page(page, frame, stack_flags)?;
-                    
-                    // Zero-initialize stack pages
+
                     core::ptr::write_bytes(
                         page.start_address().as_mut_ptr::<u8>(),
                         0,
@@ -1801,7 +1800,6 @@ pub struct BootInfoFrameAllocator {
 
 impl<S: PageSize> FrameDeallocator<S> for BootInfoFrameAllocator {
     unsafe fn deallocate_frame(&mut self, frame: PhysFrame<S>) {
-        // Find the region containing this frame
         if let Some(region) = self.memory_map.iter()
             .find(|r| r.region_type == MemoryRegionType::Usable)
             .filter(|r| frame.start_address().as_u64() >= r.range.start_addr()

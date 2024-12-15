@@ -1129,10 +1129,8 @@ impl ProcessList {
             return Err("Maximum process limit reached");
         }
         
-        // Store the process ID before moving the process
         let process_id = process.id().0;
-        
-        // If this is the first process or there's no current process, make it current
+
         if self.processes.is_empty() || self.current.is_none() {
             let new_index = self.processes.len();
             self.processes.push(process);
@@ -1396,7 +1394,6 @@ impl ProcessList {
         if let Some(idx) = self.current {
             self.processes.get_mut(idx)
         } else if !self.processes.is_empty() {
-            // If we have processes but no current one, set the first Ready process as current
             for (idx, process) in self.processes.iter().enumerate() {
                 if process.state() == ProcessState::Ready {
                     self.current = Some(idx);
