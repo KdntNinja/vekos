@@ -28,6 +28,7 @@ use crate::verification::{
     MemoryOpType, ProofData, MemoryProof, VERIFICATION_REGISTRY
 };
 use crate::tsc;
+use crate::process::USER_STACK_TOP;
 use crate::hash;
 use crate::swap::SWAP_MANAGER;
 use x86_64::structures::paging::PageSize;
@@ -36,6 +37,7 @@ use crate::process::PROCESS_LIST;
 use x86_64::structures::idt::PageFaultErrorCode;
 use crate::LARGE_PAGE_THRESHOLD;
 use crate::swap::DISK_IO;
+use crate::process::USER_STACK_SIZE;
 use crate::page_table::PageTableVerifier;
 use crate::ALLOCATOR;
 use crate::page_table_cache::PageTableCache;
@@ -61,7 +63,7 @@ const ZONE_NORMAL_END: u64 = 0x40000000;
 const ZONE_HIGHMEM_START: u64 = ZONE_NORMAL_END;
 const ALLOCATION_CHUNK_SIZE: usize = 1024;
 const USER_SPACE_START: u64 = 0x0000000000000000;
-const USER_SPACE_END: u64 = 0x00007FFFFFFFFFFF;
+pub const USER_SPACE_END: u64 = 0x00007FFFFFFFFFFF;
 const KERNEL_SPACE_START: u64 = 0xFFFF800000000000;
 const COW_PAGE_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
 const PAGE_PRESENT: u64 = 1 << 0;
@@ -118,19 +120,51 @@ impl Zone {
     }
 
     fn allocate_pages(&mut self, count: usize) -> Option<PhysFrame> {
+        serial_println!("BuddyAllocator: Attempting allocation of {} bytes (order {})", 
+            count * 4096, (count - 1).next_power_of_two().trailing_zeros());
+    
         if self.free_pages < count {
+            serial_println!("BuddyAllocator: Not enough free pages ({} needed, {} available)", 
+                count, self.free_pages);
             return None;
         }
-
-        let order = (count - 1).next_power_of_two().trailing_zeros() as usize;
-        
-        for current_order in order..self.free_lists.len() {
-            if let Some(frame) = self.free_lists[current_order].take() {
-                self.free_pages -= 1 << order;
-                return Some(frame);
+    
+        let required_order = (count - 1).next_power_of_two().trailing_zeros() as usize;
+        let mut current_order = required_order;
+    
+        while current_order <= MAX_ORDER {
+            if let Some(mut block) = self.free_lists[current_order].take() {
+                if current_order > required_order {
+                    serial_println!("BuddyAllocator: Splitting block of order {}", current_order);
+                    block = self.split_block(block, required_order);
+                }
+                
+                self.free_pages -= count;
+                serial_println!("BuddyAllocator: Allocated block at {:?}", block);
+                return Some(block);
             }
+            current_order += 1;
         }
+    
+        serial_println!("BuddyAllocator: Failed to allocate {} bytes", count * 4096);
         None
+    }
+    
+    fn split_block(&mut self, block: PhysFrame, target_order: usize) -> PhysFrame {
+        let mut current_block = block;
+        let mut current_order = (block.start_address().as_u64() >> 12).trailing_zeros() as usize;
+        
+        while current_order > target_order {
+            let buddy_offset = 1 << (current_order - 1 + 12);
+            let buddy_addr = current_block.start_address().as_u64() + buddy_offset;
+            
+            let buddy = PhysFrame::containing_address(PhysAddr::new(buddy_addr));
+            
+            current_order -= 1;
+            self.free_lists[current_order].replace(buddy);
+        }
+        
+        current_block
     }
 
     fn free_pages(&mut self, frame: PhysFrame, count: usize) {
@@ -592,10 +626,11 @@ pub enum MemoryError {
     VerificationFailed,
     SwapFileError,
     NoSwapSpace,
-    InvalidSwapSlot,
+    InvalidSwapSlot, 
     VramAllocationFailed,
     VramVerificationFailed,
     VramInvalidBlock,
+    InvalidAlignment,
 }
 
 #[derive(Debug, Clone)]
@@ -806,14 +841,22 @@ impl MemoryManager {
         frame: PhysFrame,
         flags: PageTableFlags,
     ) -> Result<(), MemoryError> {
+        if !self.verify_memory_requirements(4096) {
+            return Err(MemoryError::FrameAllocationFailed);
+        }
+
+        if !frame.start_address().is_aligned(4096u64) {
+            return Err(MemoryError::InvalidAddress); 
+        }
+    
         let result = self.page_table
             .map_to(page, frame, flags, &mut self.frame_allocator)
             .map_err(|_| MemoryError::PageMappingFailed)?
             .flush();
-    
-        
+
         if !self.page_table_verifier.verify_hierarchy(self.page_table.level_4_table())
-            .map_err(|_| MemoryError::VerificationFailed)? {
+            .map_err(|_| MemoryError::VerificationFailed)? 
+        {
             return Err(MemoryError::VerificationFailed);
         }
     
@@ -1227,9 +1270,25 @@ impl MemoryManager {
     }
 
     pub fn verify_memory_requirements(&self, required_bytes: usize) -> bool {
-        self.frame_allocator.verify_memory_requirements(required_bytes)
-    }
+        let available_frames = self.frame_allocator.usable_frames().count();
+        let available_bytes = available_frames * 4096;
+        
+        if required_bytes > available_bytes {
+            serial_println!(
+                "Memory requirement check:\n  Required: {} bytes ({} KB)\n  Available: {} bytes ({} KB)\n  Result: Insufficient",
+                required_bytes, required_bytes / 1024,
+                available_bytes, available_bytes / 1024
+            );
+            return false;
+        }
 
+        serial_println!(
+            "Memory requirement check:\n  Required: {} bytes ({} KB)\n  Available: {} bytes ({} KB)\n  Result: Sufficient",
+            required_bytes, required_bytes / 1024,
+            available_bytes, available_bytes / 1024
+        );
+        true
+    }
     
     pub fn get_zone_usage(&self, zone_type: MemoryZoneType) -> (usize, usize) {
         self.frame_allocator.get_zone_usage(zone_type)
@@ -1289,6 +1348,32 @@ impl MemoryManager {
         &mut self,
         region: UserSpaceRegion,
     ) -> Result<(), MemoryError> {
+        if region.start.as_u64() == USER_STACK_TOP - USER_STACK_SIZE as u64 {
+            let stack_flags = PageTableFlags::PRESENT 
+                | PageTableFlags::WRITABLE 
+                | PageTableFlags::USER_ACCESSIBLE;
+
+            let pages = USER_STACK_SIZE / 4096;
+            for i in 0..pages {
+                let page = Page::containing_address(region.start + (i * 4096) as u64);
+                let frame = self.frame_allocator
+                    .allocate_frame()
+                    .ok_or(MemoryError::FrameAllocationFailed)?;
+                    
+                unsafe {
+                    self.map_page(page, frame, stack_flags)?;
+                    
+                    // Zero-initialize stack pages
+                    core::ptr::write_bytes(
+                        page.start_address().as_mut_ptr::<u8>(),
+                        0,
+                        4096
+                    );
+                }
+            }
+            return Ok(());
+        }
+
         if !self.is_valid_user_address(region.start) {
             return Err(MemoryError::InvalidAddress);
         }
@@ -1506,7 +1591,7 @@ impl MemoryManager {
         Ok(())
     }
 
-    fn phys_to_virt(&self, phys: PhysAddr) -> VirtAddr {
+    pub fn phys_to_virt(&self, phys: PhysAddr) -> VirtAddr {
         VirtAddr::new(phys.as_u64() + self.physical_memory_offset.as_u64())
     }
 
@@ -1527,9 +1612,7 @@ impl MemoryManager {
     ) -> Result<(), MemoryError> {
         let mut cache = self.page_table_cache.lock();
         
-        
         let phys_memory_offset = self.physical_memory_offset;
-        
         
         let l4_addr = {
             let l4_table = &mut *self.page_table.level_4_table();
@@ -1571,7 +1654,6 @@ impl MemoryManager {
                 }
             }
         }
-        
         
         drop(cache);
         unsafe {
@@ -1717,17 +1799,16 @@ pub struct BootInfoFrameAllocator {
     cached_regions_count: usize,
 }
 
-impl FrameDeallocator<Size4KiB> for BootInfoFrameAllocator {
-    unsafe fn deallocate_frame(&mut self, frame: PhysFrame<Size4KiB>) {
-        
-        
+impl<S: PageSize> FrameDeallocator<S> for BootInfoFrameAllocator {
+    unsafe fn deallocate_frame(&mut self, frame: PhysFrame<S>) {
+        // Find the region containing this frame
         if let Some(region) = self.memory_map.iter()
             .find(|r| r.region_type == MemoryRegionType::Usable)
             .filter(|r| frame.start_address().as_u64() >= r.range.start_addr()
                 && frame.start_address().as_u64() < r.range.end_addr())
         {
             let frame_index = ((frame.start_address().as_u64() - region.range.start_addr()) 
-                / Size4KiB::SIZE) as usize;
+                / S::SIZE) as usize;
             if frame_index < self.next {
                 self.next = frame_index;
             }

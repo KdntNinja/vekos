@@ -117,6 +117,15 @@ pub enum ProofData {
     Process(ProcessProof),
     Filesystem(FSProof),
     Boot(BootProof),
+    Tile(TileProof),
+}
+
+#[derive(Debug, Clone)]
+pub struct TileProof {
+    pub tile_id: u32,
+    pub position: (u32, u32),
+    pub tile_hash: Hash,
+    pub attributes_hash: Hash,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -345,13 +354,20 @@ impl VerificationRegistry {
                 verification_data.extend_from_slice(&[3]);
                 verification_data.extend_from_slice(&boot_proof.stage_hash.0.to_ne_bytes());
             },
+            ProofData::Tile(tile_proof) => {
+                verification_data.extend_from_slice(&[4]);
+                verification_data.extend_from_slice(&tile_proof.tile_id.to_ne_bytes());
+                verification_data.extend_from_slice(&(tile_proof.position.0.to_ne_bytes()));
+                verification_data.extend_from_slice(&(tile_proof.position.1.to_ne_bytes()));
+                verification_data.extend_from_slice(&tile_proof.tile_hash.0.to_ne_bytes());
+            },
         }
-
+    
         let verifier = CRYPTO_VERIFIER.lock();
         if !verifier.verify_signature(&verification_data, &proof.signature) {
             return Err(VerificationError::InvalidSignature);
         }
-
+    
         Ok(true)
     }
 

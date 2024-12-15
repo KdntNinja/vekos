@@ -32,7 +32,9 @@ use x86_64::{
 use x86_64::instructions::interrupts;
 use crate::fs::VerifiedFileSystem;
 use crate::DRAWING_STATE;
+use crate::serial_print;
 use crate::process::SessionId;
+use crate::VBE_DRIVER;
 use crate::FRAMEBUFFER;
 use crate::process::Session;
 use crate::fs::FSOperation;
@@ -152,6 +154,8 @@ pub enum SyscallNumber {
     DrawPixel = 34,
     DrawRect = 35,
     SetColor = 36,
+    VbeSetPalette = 37,
+    VbeTransform = 38,
 }
 
 impl From<SyscallError> for u64 {
@@ -401,6 +405,30 @@ fn sys_draw_pixel(x: u32, y: u32) -> u64 {
         let color = DRAWING_STATE.lock().current_color;
         match fb.draw_pixel_verified(x, y, color) {
             Ok(hash) => hash.0,
+            Err(_) => SyscallError::InvalidOperation.into(),
+        }
+    } else {
+        SyscallError::InvalidOperation.into()
+    }
+}
+
+fn sys_vbe_set_palette(index: u8, r: u8, g: u8, b: u8) -> u64 {
+    let mut vbe = VBE_DRIVER.lock();
+    if let Some(ref mut driver) = *vbe {
+        match driver.set_palette_color(index, r, g, b) {
+            Ok(_) => 0,
+            Err(_) => SyscallError::InvalidOperation.into(),
+        }
+    } else {
+        SyscallError::InvalidOperation.into()
+    }
+}
+
+fn sys_vbe_transform(angle: f32, scale_x: f32, scale_y: f32) -> u64 {
+    let mut vbe = VBE_DRIVER.lock();
+    if let Some(ref mut driver) = *vbe {
+        match driver.mode7_transform(angle, scale_x, scale_y) {
+            Ok(_) => 0,
             Err(_) => SyscallError::InvalidOperation.into(),
         }
     } else {
@@ -1063,7 +1091,29 @@ fn sys_exec(program_ptr: *const u8) -> u64 {
         Err(_) => return SyscallError::InvalidArgument.into(),
     };
 
-    
+    serial_println!("\n=== Program Execution Debug ===");
+    if let Some(elf_analyzer) = ElfLoader::new(elf_data).ok() {
+        serial_println!("ELF Analysis:");
+        serial_println!("Entry point: {:#x}", elf_analyzer.entry_point().as_u64());
+        
+        // Handle Result explicitly without trying to iterate over unit
+        if let Ok(_) = elf_analyzer.validate_segments() {
+            if let Ok(segments) = elf_loader.program_headers() {
+                for (i, segment) in segments.iter().enumerate() {
+                    serial_println!("Segment {}: VAddr: {:#x} Size: {:#x}, Type: {}",
+                        i, 
+                        segment.vaddr,
+                        segment.memsz,
+                        segment.type_
+                    );
+                }
+            }
+        }
+    }
+
+    serial_println!("\nProcess State Before Exec:");
+    serial_println!("{}", current.debug_execution_state());
+
     if let Err(_) = elf_loader.validate_segments() {
         return SyscallError::InvalidArgument.into();
     }
@@ -1075,10 +1125,49 @@ fn sys_exec(program_ptr: *const u8) -> u64 {
             return SyscallError::MemoryError(MemoryError::PageMappingFailed).into();
         }
 
-        
         match elf_loader.load(memory_manager) {
             Ok(entry_point) => {
-                current.set_instruction_pointer(entry_point.as_u64());
+                let loaded_addr = entry_point.as_u64();
+                serial_println!("\nExecution Debug:");
+                serial_println!("Entry point mapped at: {:#x}", loaded_addr);
+        
+                // Verify page permissions
+                let page = Page::<Size4KiB>::containing_address(VirtAddr::new(loaded_addr));;
+                match memory_manager.page_table.translate_page(page) {
+                    Ok(frame) => {
+                        let flags = memory_manager.page_table.level_4_table()[page.p4_index()].flags();
+                        serial_println!("Page flags: {:?}", flags);
+                        if !flags.contains(PageTableFlags::PRESENT) {
+                            serial_println!("ERROR: Page not present!");
+                            return SyscallError::MemoryError(MemoryError::InvalidAddress).into();
+                        }
+                        if !flags.contains(PageTableFlags::USER_ACCESSIBLE) {
+                            serial_println!("ERROR: Page not user accessible!");
+                            return SyscallError::MemoryError(MemoryError::InvalidPermissions).into();
+                        }
+                        if flags.contains(PageTableFlags::NO_EXECUTE) {
+                            serial_println!("ERROR: Page marked as non-executable!");
+                            return SyscallError::MemoryError(MemoryError::InvalidPermissions).into();
+                        }
+                    },
+                    Err(e) => {
+                        serial_println!("ERROR: Failed to translate page: {:?}", e);
+                        return SyscallError::MemoryError(MemoryError::InvalidAddress).into();
+                    }
+                };
+        
+                // Verify the loaded code
+                unsafe {
+                    let code_bytes = core::slice::from_raw_parts(loaded_addr as *const u8, 16);
+                    serial_println!("First 16 bytes at entry point:");
+                    for (i, byte) in code_bytes.iter().enumerate() {
+                        if i % 8 == 0 { serial_println!(); }
+                        serial_print!("{:02x} ", byte);
+                    }
+                    serial_println!();
+                }
+        
+                current.set_instruction_pointer(loaded_addr);
                 current.set_stack_pointer(current.user_stack_top()
                     .map_or(0, |addr| addr.as_u64()));
                 0
@@ -1325,6 +1414,10 @@ extern "C" fn handle_syscall(regs: &mut SyscallRegisters) -> u64 {
         34 => sys_draw_pixel(regs.rdi as u32, regs.rsi as u32),
         35 => sys_draw_rect(regs.rdi as u32, regs.rsi as u32, regs.rdx as u32, regs.r8 as u32),
         36 => sys_set_color(regs.rdi as u32),
+        37 => sys_vbe_set_palette(regs.rdi as u8, regs.rsi as u8, regs.rdx as u8, regs.r8 as u8),
+        38 => sys_vbe_transform(f32::from_bits(regs.rdi as u32), 
+                            f32::from_bits(regs.rsi as u32),
+                            f32::from_bits(regs.rdx as u32)),
         _ => u64::from(SyscallError::InvalidSyscall),
     }
 }

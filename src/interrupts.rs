@@ -19,6 +19,7 @@ use crate::{print, println};
 use pic8259::ChainedPics;
 use spin;
 use lazy_static::lazy_static;
+use crate::FRAMEBUFFER;
 use pc_keyboard::{layouts, HandleControl, Keyboard, ScancodeSet1, KeyCode};
 use crate::time::SYSTEM_TIME;
 use crate::scheduler::SCHEDULER;
@@ -45,6 +46,7 @@ const ESC: u8 = 0x1B;
 pub enum InterruptIndex {
     Timer = PIC_1_OFFSET,
     Keyboard = PIC_1_OFFSET + 1,
+    Vsync = PIC_1_OFFSET + 5,
 }
 
 impl InterruptIndex {
@@ -71,10 +73,11 @@ lazy_static! {
             .set_handler_fn(timer_interrupt_handler);
         idt[InterruptIndex::Keyboard.as_usize()]
             .set_handler_fn(keyboard_interrupt_handler);
+        idt[InterruptIndex::Vsync.as_usize()]
+            .set_handler_fn(vsync_interrupt_handler);
         idt
     };
 }
-
 lazy_static! {
     static ref KEYBOARD: spin::Mutex<Keyboard<layouts::Jis109Key, ScancodeSet1>> = spin::Mutex::new(
         Keyboard::new(ScancodeSet1::new(), layouts::Jis109Key, HandleControl::Ignore)
@@ -116,16 +119,31 @@ unsafe fn reset_keyboard_controller() {
     let _ack = data_port.read();
 }
 
+extern "x86-interrupt" fn vsync_interrupt_handler(
+    _stack_frame: InterruptStackFrame)
+{
+    use x86_64::instructions::port::Port;
+
+    unsafe {
+        let mut status_port: Port<u8> = Port::new(0x3da);
+        status_port.read();
+
+        if let Some(ref mut fb) = *FRAMEBUFFER.lock() {
+            fb.handle_vsync();
+        }
+
+        PICS.lock()
+            .notify_end_of_interrupt(InterruptIndex::Vsync.as_u8());
+    }
+}
+
 pub fn init_idt() {
     IDT.load();
     
     unsafe {
-        PICS.lock().write_masks(0xfd, 0xff);
+        PICS.lock().write_masks(0xdd, 0xff);
         PICS.lock().initialize();
-        
-        
         reset_keyboard_controller();
-        
         
         for _ in 0..10000 {
             core::hint::spin_loop();
@@ -165,7 +183,6 @@ extern "x86-interrupt" fn page_fault_handler(
     
     let mut handled = false;
     
-    
     if !present && user && write {
         if let Some(current) = PROCESS_LIST.lock().current() {
             if let Some(stack_top) = current.user_stack_top() {
@@ -181,7 +198,6 @@ extern "x86-interrupt" fn page_fault_handler(
             }
         }
     }
-    
     
     if !handled && present && write {
         let mut mm_lock = MEMORY_MANAGER.lock();

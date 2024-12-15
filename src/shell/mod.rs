@@ -17,21 +17,26 @@
 use alloc::string::String;
 use crate::process::ProcessState;
 use alloc::vec::Vec;
+use crate::fs::FileSystem;
 use crate::ALLOCATOR;
 use alloc::collections::BTreeMap;
 use crate::vga_buffer::{WRITER, Color};
+use x86_64::structures::paging::Size4KiB;
 use crate::serial_println;
 use alloc::format;
 use crate::fs::{FILESYSTEM};
+use x86_64::structures::paging::Mapper;
 use crate::process::PROCESS_LIST;
 use crate::syscall::KEYBOARD_BUFFER;
 use core::fmt::Write;
 use crate::Process;
+use x86_64::structures::paging::Page;
 use crate::fs::FsError;
 mod commands;
 use crate::vga_buffer::BUFFER_WIDTH;
 use crate::fs::validate_path;
 use crate::MEMORY_MANAGER;
+use crate::VirtAddr;
 use crate::fs::normalize_path;
 use crate::vga_buffer::ColorCode;
 use crate::alloc::string::ToString;
@@ -58,6 +63,12 @@ pub enum ShellError {
     BufferOverflow,
     SyntaxError,
     NotADirectory,
+}
+
+impl From<&str> for ShellError {
+    fn from(_: &str) -> Self {
+        ShellError::ExecutionFailed
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -479,50 +490,136 @@ impl Shell {
     }
 
     fn execute_command(&mut self, command: &str, args: &[String]) -> ShellResult {
-        serial_println!("Shell: Executing command '{}' with args {:?}", command, args);
+        serial_println!("Shell: Starting command execution for '{}'", command);
     
-        let allocator_check = {
-            let allocator = ALLOCATOR.lock();
-            allocator.check_allocation_state()
-        };
-        
-        if !allocator_check {
-            serial_println!("Warning: Memory allocator in potentially invalid state");
-            return Err(ShellError::InternalError);
-        }
-
-        let current_pid = {
-            let process_list = PROCESS_LIST.lock();
-            process_list.current().map(|p| p.id())
-        };
-        
-        let result = match self.executor.execute(command, args) {
-            Ok(exit_code) => {
-                match exit_code {
-                    ExitCode::Success => Ok(ExitCode::Success),
-                    ExitCode::CommandNotFound => Ok(ExitCode::CommandNotFound),
-                    _ => {
-                        serial_println!("Command exited with status: {:?}", exit_code);
-                        Ok(exit_code)
+        if command == "mode7test" {
+            serial_println!("Shell: Detected mode7test command");
+            let command_path = "/programs/mode7test";
+            let mut fs = FILESYSTEM.lock();
+            
+            serial_println!("Shell: Checking mode7test file status");
+            match fs.stat(command_path) {
+                Ok(stats) => {
+                    serial_println!("Shell: mode7test file found");
+                    if !stats.permissions.execute {
+                        serial_println!("Shell: mode7test lacks execute permission");
+                        self.display.display_error(&ShellError::PermissionDenied);
+                        return Err(ShellError::PermissionDenied);
                     }
-                }
-            },
-            Err(e) => {
-                self.display.display_error(&e);
-                Err(e)
-            }
-        };
-
-        if let Some(pid) = current_pid {
-            let mut process_list = PROCESS_LIST.lock();
-            if process_list.current().map(|p| p.id()) != Some(pid) {
-                if let Some(current) = process_list.get_mut_by_id(pid) {
-                    current.set_state(ProcessState::Running);
-                }
-            }
-        }
     
-        result
+                    serial_println!("Shell: Reading mode7test file");
+                    let data = match fs.read_file(command_path) {
+                        Ok(data) => {
+                            serial_println!("Shell: Successfully read mode7test data ({} bytes)", data.len());
+                            data
+                        },
+                        Err(e) => {
+                            serial_println!("Shell: Failed to read mode7test data: {:?}", e);
+                            self.display.display_error(&ShellError::ExecutionFailed);
+                            return Err(ShellError::ExecutionFailed);
+                        }
+                    };
+                    
+                    drop(fs);
+                    serial_println!("Shell: Creating new process for mode7test");
+    
+                    let mut process_list = PROCESS_LIST.lock();
+                    process_list.debug_process_list();
+                    serial_println!("Shell: Process list state: {} processes", process_list.processes.len());
+                    
+                    // Check current process explicitly
+                    if let Some(current) = process_list.current() {
+                        serial_println!("Shell: Found current process: PID={}", current.id().0);
+                    } else {
+                        serial_println!("Shell: No current process found!");
+                    }
+    
+                    match process_list.current() {
+                        Some(_current) => {
+                            let mut mm_lock = MEMORY_MANAGER.lock();
+                            if let Some(mm) = mm_lock.as_mut() {
+                                match Process::new_user(mm) {
+                                    Ok(mut process) => {
+                                        serial_println!("Shell: Setting up mode7test process");
+                                        process.set_instruction_pointer(data.as_ptr() as u64);
+                                        process.set_state(ProcessState::Ready);
+                                        
+                                        if let Some(stack_top) = process.user_stack_top() {
+                                            process.set_stack_pointer(stack_top.as_u64());
+                                            serial_println!("Shell: Set up stack pointer to {:#x}", stack_top.as_u64());
+                                            
+                                            // Add Size4KiB type annotation
+                                            let stack_page = Page::<Size4KiB>::containing_address(stack_top);
+                                            if let Ok(_) = mm.page_table.translate_page(stack_page) {
+                                                serial_println!("Shell: Stack page verified as mapped");
+                                            } else {
+                                                serial_println!("Shell: Stack page not properly mapped!");
+                                                return Err(ShellError::ExecutionFailed);
+                                            }
+                                        } else {
+                                            serial_println!("Shell: Failed to set up user stack");
+                                            return Err(ShellError::ExecutionFailed);
+                                        }
+                                        
+                                        serial_println!("Shell: Adding mode7test process to process list");
+                                        match process_list.add(process) {
+                                            Ok(_) => {
+                                                serial_println!("Shell: Successfully added mode7test process");
+                                                if let Some(current_proc) = process_list.current_mut() {
+                                                    serial_println!("Shell: Setting current process to blocked");
+                                                    current_proc.set_state(ProcessState::Blocked);
+                                                }
+                                                Ok(ExitCode::Success)
+                                            },
+                                            Err(e) => {
+                                                serial_println!("Shell: Failed to add mode7test process: {:?}", e);
+                                                Err(ShellError::ExecutionFailed)
+                                            }
+                                        }
+                                    },
+                                    Err(e) => {
+                                        serial_println!("Shell: Failed to create mode7test process: {:?}", e);
+                                        Err(ShellError::ExecutionFailed)
+                                    }
+                                }
+                            } else {
+                                serial_println!("Shell: Memory manager not available");
+                                Err(ShellError::ExecutionFailed)
+                            }
+                        },
+                        None => {
+                            serial_println!("Shell: No current process found - attempting to create initial process");
+                            // Try to create an initial process if none exists
+                            let mut mm_lock = MEMORY_MANAGER.lock();
+                            if let Some(mm) = mm_lock.as_mut() {
+                                match Process::new(mm) {
+                                    Ok(init_process) => {
+                                        serial_println!("Shell: Created initial process");
+                                        process_list.add(init_process)?;
+                                        // Retry the command execution
+                                        drop(process_list);
+                                        return self.execute_command(command, args);
+                                    },
+                                    Err(e) => {
+                                        serial_println!("Shell: Failed to create initial process: {:?}", e);
+                                        Err(ShellError::ExecutionFailed)
+                                    }
+                                }
+                            } else {
+                                serial_println!("Shell: Memory manager not available for initial process");
+                                Err(ShellError::ExecutionFailed)
+                            }
+                        }
+                    }
+                },
+                Err(e) => {
+                    serial_println!("Shell: mode7test file not found: {:?}", e);
+                    return self.executor.execute(command, args);
+                }
+            }
+        } else {
+            self.executor.execute(command, args)
+        }
     }
 
     fn handle_input(&mut self, byte: u8) -> ShellResult {

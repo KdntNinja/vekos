@@ -131,10 +131,12 @@ impl Scheduler {
     }
 
     pub fn schedule(&mut self) {
+        serial_println!("Scheduler: Beginning scheduling cycle");
         self.cleanup_resources();
         
         let mut processes = PROCESS_LIST.lock();
-        
+        serial_println!("Scheduler: Current process count: {}", processes.processes.len());
+
         if processes.current().is_none() && self.current_process.is_none() {
             if let Some((next_pid, _)) = self.priority_scheduler.get_next_process() {
                 if let Some(next) = processes.get_mut_by_id(next_pid) {
@@ -188,6 +190,13 @@ impl Scheduler {
     }
 
     unsafe fn switch_to(&self, next: &mut Process) {
+        serial_println!("\nProcess Switch Debug:");
+        serial_println!("Switching to process {} at instruction {:#x}", 
+            next.id().0, 
+            next.context.regs.rip);
+        serial_println!("Stack pointer: {:#x}", next.context.regs.rsp);
+        serial_println!("Page table base: {:#x}", next.page_table().start_address().as_u64());
+        serial_println!("CS: {:#x}, SS: {:#x}", next.context.regs.cs, next.context.regs.ss);
         
         if let Some(current_pid) = self.current_process {
             let mut processes = PROCESS_LIST.lock();
@@ -196,7 +205,6 @@ impl Scheduler {
             }
         }
 
-        
         let new_table = next.page_table();
         Cr3::write(new_table, Cr3::read().1);
 

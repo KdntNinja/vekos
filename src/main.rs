@@ -27,11 +27,14 @@
 extern crate alloc;
 pub mod serial;
 pub mod signals;
+pub mod graphics_hal;
 pub mod page_table_cache;
+use x86_64::instructions::port::Port;
 use spin::Mutex;
 use crate::verification::VERIFICATION_REGISTRY;
 use alloc::format;
 use lazy_static::lazy_static;
+use crate::vbe::VbeDriver;
 pub use verification::{Hash, OperationProof, Verifiable, VerificationError};
 use core::panic::PanicInfo;
 use bootloader::{bootinfo::BootInfo, entry_point};
@@ -48,6 +51,7 @@ mod verification;
 mod allocator;
 pub mod crypto;
 mod vkfs;
+mod vbe;
 mod boot_splash;
 pub mod hash_chain;
 pub mod merkle_tree;
@@ -100,6 +104,10 @@ lazy_static! {
 
 lazy_static! {
     pub static ref FRAMEBUFFER: Mutex<Option<framebuffer::Framebuffer>> = Mutex::new(None);
+}
+
+lazy_static! {
+    pub static ref VBE_DRIVER: Mutex<Option<VbeDriver>> = Mutex::new(None);
 }
 
 pub const PALETTE_COLORS: [u32; 16] = [
@@ -278,6 +286,8 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         green_mask_pos: 8,
         blue_mask_size: 8,
         blue_mask_pos: 0,
+        page_flip_supported: true,
+        current_page: 0,
     };
 
     let physical_buffer = 0xfd000000;
@@ -299,6 +309,41 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         serial_println!("Memory manager unavailable for framebuffer initialization");
     }
     drop(mm_lock);
+
+    if let Some(ref mut fb) = *FRAMEBUFFER.lock() {
+        unsafe {
+            let mut crt_port = Port::<u16>::new(0x3D4);
+            let mut vga_status = Port::<u8>::new(0x3D5);
+
+            crt_port.write(0x11u16);
+            let current = vga_status.read();
+            vga_status.write(current | 0x20);
+        }
+        BootSplash::print_boot_message("Vsync interrupts enabled", BootMessageType::Success);
+    }
+
+    serial_println!("Starting graphics HAL initialization...");
+    let graphics_config = graphics_hal::FramebufferConfig {
+        width: 800,
+        height: 600,
+        pitch: 800 * 4,
+        bpp: 32,
+        physical_buffer: 0xfd000000,
+    };
+    let mut graphics = graphics_hal::GraphicsHAL::new(graphics_config);
+    if let Err(_) = graphics.init_double_buffering() {
+        BootSplash::print_boot_message("Graphics HAL initialization failed!", BootMessageType::Error);
+    } else {
+        BootSplash::print_boot_message("Graphics HAL initialization complete", BootMessageType::Success);
+    }
+
+    serial_println!("Starting VBE initialization...");
+    if let Ok(vbe) = VbeDriver::new() {
+        *VBE_DRIVER.lock() = Some(vbe);
+        BootSplash::print_boot_message("VBE initialization complete", BootMessageType::Success);
+    } else {
+        BootSplash::print_boot_message("VBE initialization failed!", BootMessageType::Error);
+    }
 
     BootSplash::print_boot_message("VEKOS initialization complete", BootMessageType::Success);
 

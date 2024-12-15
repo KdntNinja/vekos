@@ -21,9 +21,13 @@ use crate::shell::ExitCode;
 use super::ShellResult;
 use crate::serial_println;
 use crate::fs::FILESYSTEM;
+use crate::MEMORY_MANAGER;
 use crate::println;
+use crate::process::ProcessState;
 use crate::shell::ShellDisplay;
 use crate::fs::validate_path;
+use crate::VirtAddr;
+use crate::Process;
 use crate::shell::format;
 use super::commands::ls::{list_directory, parse_ls_flags};
 use crate::fs::FileSystem;
@@ -77,22 +81,48 @@ impl CommandExecutor {
     }
 
     fn execute_external(&self, command: &str, args: &[String]) -> ShellResult {
-        
         let mut fs = FILESYSTEM.lock();
-        let command_path = format!("/bin/{}", command);
+        // Check both /bin and /usr/bin
+        let command_paths = [
+            format!("/bin/{}", command),
+            format!("/usr/bin/{}", command),
+            format!("/programs/{}", command)  // Add this line
+        ];
         
-        match fs.stat(&command_path) {
-            Ok(_) => {
-                
-                let data = fs.read_file(&command_path)
-                    .map_err(|_| ShellError::ExecutionFailed)?;
-                
-                
-                
-                Err(ShellError::CommandNotFound)
-            },
-            Err(_) => Err(ShellError::CommandNotFound),
+        for command_path in command_paths.iter() {
+            match fs.stat(command_path) {
+                Ok(stats) => {
+                    if !stats.permissions.execute {
+                        return Err(ShellError::PermissionDenied);
+                    }
+    
+                    let data = fs.read_file(command_path)
+                        .map_err(|_| ShellError::ExecutionFailed)?;
+                    
+                    drop(fs); // Release filesystem lock before executing
+    
+                    let mut process_list = PROCESS_LIST.lock();
+                    if let Some(current) = process_list.current() {
+                        let mut mm_lock = MEMORY_MANAGER.lock();
+                        if let Some(mm) = mm_lock.as_mut() {
+                            // Create new process from the executable
+                            if let Ok(mut process) = Process::new(mm) {
+                                // Get the raw address value instead of VirtAddr
+                                process.set_instruction_pointer(data.as_ptr() as u64);
+                                process.set_state(ProcessState::Ready);
+                                process_list.add(process)
+                                    .map_err(|_| ShellError::ExecutionFailed)?;
+                                return Ok(ExitCode::Success);
+                            }
+                        }
+                    }
+                    return Err(ShellError::ExecutionFailed);
+                },
+                Err(_) => continue,
+            }
         }
+        
+        Err(ShellError::CommandNotFound)
     }
 
     fn cmd_exit(args: &[String]) -> ShellResult {

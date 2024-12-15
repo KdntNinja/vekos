@@ -27,15 +27,18 @@ use x86_64::{
 };
 
 use crate::println;
+use crate::format;
 use crate::MEMORY_MANAGER;
 use crate::tsc;
 use crate::memory::SWAPPED_PAGES;
+use crate::memory::UserSpaceRegion;
 use crate::verification::{Hash, OperationProof, Verifiable, VerificationError, Operation, ProcessOpType, ProofData, ProcessProof};
 use crate::hash;
 use crate::verification::VERIFICATION_REGISTRY;
 use crate::memory::PAGE_REF_COUNTS;
 use alloc::string::String;
 use x86_64::structures::paging::FrameDeallocator;
+use x86_64::structures::paging::Size4KiB;
 use x86_64::structures::paging::FrameAllocator;
 use crate::print;
 use x86_64::structures::paging::Mapper;
@@ -49,7 +52,7 @@ use alloc::collections::BTreeMap;
 
 const KERNEL_STACK_SIZE: usize = 16 * 1024; 
 pub const USER_STACK_SIZE: usize = 1024 * 1024; 
-const USER_STACK_TOP: u64 = 0x0000_7FFF_FFFF_0000;
+pub const USER_STACK_TOP: u64 = 0x0000_7FFF_FFFF_0000;
 
 static NEXT_PID: AtomicU64 = AtomicU64::new(1);
 static NEXT_SID: AtomicU64 = AtomicU64::new(1);
@@ -500,7 +503,7 @@ impl Process {
         serial_println!("Process::new: Initializing process structure");
         let process = Process {
             id: ProcessId::new(),
-            state: ProcessState::New,
+            state: ProcessState::Ready,
             registers: Registers::new(),
             page_table,
             kernel_stack_bottom,
@@ -670,29 +673,83 @@ impl Process {
 
     pub fn new_user(memory_manager: &mut MemoryManager) -> Result<Self, MemoryError> {
         let mut process = Self::new(memory_manager)?;
+
         let user_stack_bottom = VirtAddr::new(USER_STACK_TOP - USER_STACK_SIZE as u64);
         process.user_stack_bottom = Some(user_stack_bottom);
+    
+        let stack_region = UserSpaceRegion::new(
+            user_stack_bottom,
+            USER_STACK_SIZE,
+            PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE,
+        );
+        
+        if let Err(e) = memory_manager.map_user_region(stack_region) {
+            if let Err(cleanup_err) = process.cleanup(memory_manager) {
+                serial_println!("Warning: Failed to clean up after stack mapping failure: {:?}", cleanup_err);
+            }
+            return Err(e);
+        }
+        
+        if let Some(stack_top) = process.user_stack_top() {
+            let stack_page = Page::<Size4KiB>::containing_address(stack_top);
+            if memory_manager.page_table.translate_page(stack_page).is_err() {
+                if let Err(cleanup_err) = process.cleanup(memory_manager) {
+                    serial_println!("Warning: Failed to clean up after stack verification failure: {:?}", cleanup_err);
+                }
+                return Err(MemoryError::PageMappingFailed);
+            }
+        }
 
         let stack_flags = PageTableFlags::PRESENT 
             | PageTableFlags::WRITABLE 
             | PageTableFlags::USER_ACCESSIBLE;
 
+        let pages = USER_STACK_SIZE / 4096;
+        for i in 0..pages {
+            let stack_page = Page::containing_address(user_stack_bottom + (i * 4096) as u64);
+            let frame = memory_manager.frame_allocator
+                .allocate_frame()
+                .ok_or(MemoryError::FrameAllocationFailed)?;
+
+            unsafe {
+                memory_manager.map_page(stack_page, frame, stack_flags)?;
+
+                core::ptr::write_bytes(
+                    stack_page.start_address().as_mut_ptr::<u8>(),
+                    0,
+                    4096
+                );
+            }
+
+            serial_println!("Verifying stack mappings...");
+            for i in 0..pages {
+                let page = Page::<Size4KiB>::containing_address(user_stack_bottom + (i * 4096) as u64);
+                match memory_manager.page_table.translate_page(page) {
+                    Ok(frame) => {
+                        serial_println!("Stack page {:#x} mapped to frame {:#x}", 
+                                    page.start_address().as_u64(),
+                                    frame.start_address().as_u64());
+                    },
+                    Err(e) => {
+                        serial_println!("Failed to verify stack page {:#x}: {:?}",
+                                    page.start_address().as_u64(), e);
+                        return Err(MemoryError::PageMappingFailed);
+                    }
+                }
+            }
+        }
+
+        let text_flags = PageTableFlags::PRESENT 
+            | PageTableFlags::USER_ACCESSIBLE;
         
-        let first_frame = memory_manager.frame_allocator
-            .allocate_frame()
-            .ok_or(MemoryError::FrameAllocationFailed)?;
+        let data_flags = PageTableFlags::PRESENT 
+            | PageTableFlags::WRITABLE 
+            | PageTableFlags::USER_ACCESSIBLE;
 
-        let last_frame = memory_manager.frame_allocator
-            .allocate_frame()
-            .ok_or(MemoryError::FrameAllocationFailed)?;
-
-        
-        let first_page = Page::containing_address(user_stack_bottom);
-        memory_manager.map_page_optimized(first_page, first_frame, stack_flags)?;
-
-        let last_page = Page::containing_address(VirtAddr::new(USER_STACK_TOP - 0x1000));
-        memory_manager.map_page_optimized(last_page, last_frame, stack_flags)?;
-
+        process.registers.rflags = RFlags::INTERRUPT_FLAG.bits();
+        process.registers.cs = 0x23;
+        process.registers.ss = 0x1B;
+    
         Ok(process)
     }
 
@@ -942,7 +999,29 @@ impl Process {
     }
 
     pub fn set_instruction_pointer(&mut self, rip: u64) {
+        serial_println!("Setting instruction pointer for process {} to {:#x}", 
+            self.id.0, rip);
         self.registers.rip = rip;
+    }
+
+    pub fn debug_execution_state(&self) -> String {
+        format!(
+            "Process {} Execution State:\n\
+             Instruction Pointer: {:#x}\n\
+             Stack Pointer: {:#x}\n\
+             User Stack: {:?}\n\
+             Page Table: {:?}\n\
+             State: {:?}\n\
+             Memory Allocations: {} ({} bytes total)",
+            self.id.0,
+            self.registers.rip,
+            self.registers.rsp,
+            self.user_stack_bottom,
+            self.page_table,
+            self.state,
+            self.memory.allocations.len(),
+            self.memory.total_allocated
+        )
     }
 
     pub fn set_stack_pointer(&mut self, rsp: u64) {
@@ -1029,7 +1108,7 @@ impl Verifiable for Process {
 }
 
 pub struct ProcessList {
-    processes: Vec<Process>,
+    pub processes: Vec<Process>,
     current: Option<usize>,
     process_groups: BTreeMap<ProcessGroupId, ProcessGroup>,
     pub(crate) sessions: BTreeMap<SessionId, Session>,
@@ -1044,11 +1123,27 @@ impl ProcessList {
             sessions: BTreeMap::new(),
         }
     }
+
     pub fn add(&mut self, process: Process) -> Result<(), &'static str> {
         if self.processes.len() >= 1024 {
             return Err("Maximum process limit reached");
         }
-        self.processes.push(process);
+        
+        // Store the process ID before moving the process
+        let process_id = process.id().0;
+        
+        // If this is the first process or there's no current process, make it current
+        if self.processes.is_empty() || self.current.is_none() {
+            let new_index = self.processes.len();
+            self.processes.push(process);
+            self.current = Some(new_index);
+            serial_println!("ProcessList: Set process {} as current at index {}", 
+                process_id, 
+                new_index
+            );
+        } else {
+            self.processes.push(process);
+        }
         Ok(())
     }
 
@@ -1263,21 +1358,58 @@ impl ProcessList {
     }
 
     pub fn current(&self) -> Option<&Process> {
+        serial_println!("DEBUG: Accessing current process");
+        serial_println!("  Current index: {:?}", self.current);
+        serial_println!("  Process count: {}", self.processes.len());
+        
         if let Some(idx) = self.current {
-            self.processes.get(idx)
+            let process = self.processes.get(idx);
+            match process {
+                Some(p) => serial_println!("  Found current process: ID={}, State={:?}", 
+                    p.id().0, p.state()),
+                None => serial_println!("  Invalid current index: no process at index {}", idx),
+            }
+            process
         } else {
+            serial_println!("  No current index set");
+            if !self.processes.is_empty() {
+                serial_println!("  Processes exist but no current set!");
+            }
             None
         }
-    }    
+    } 
+
+    pub fn debug_process_list(&self) {
+        serial_println!("DEBUG: Process List Status:");
+        serial_println!("  Total processes: {}", self.processes.len());
+        serial_println!("  Current index: {:?}", self.current);
+        for (i, process) in self.processes.iter().enumerate() {
+            serial_println!("  Process {}: ID={}, State={:?}", 
+                i,
+                process.id().0,
+                process.state()
+            );
+        }
+    }
 
     pub fn current_mut(&mut self) -> Option<&mut Process> {
         if let Some(idx) = self.current {
             self.processes.get_mut(idx)
-        } else if self.processes.is_empty() {
+        } else if !self.processes.is_empty() {
+            // If we have processes but no current one, set the first Ready process as current
+            for (idx, process) in self.processes.iter().enumerate() {
+                if process.state() == ProcessState::Ready {
+                    self.current = Some(idx);
+                    serial_println!("ProcessList: Found Ready process {} at index {}, setting as current", 
+                        process.id().0, 
+                        idx
+                    );
+                    return self.processes.get_mut(idx);
+                }
+            }
             None
         } else {
-            self.current = Some(0);
-            self.processes.get_mut(0)
+            None
         }
     }
 
