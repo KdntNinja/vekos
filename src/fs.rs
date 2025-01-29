@@ -582,18 +582,18 @@ impl InMemoryFs {
             execute: true,
         };
 
-        let mode7test = include_bytes!("../programs/mode7test");
+        let hello = include_bytes!("../programs/hello");
         
-        match self.create_file("/programs/mode7test", exec_permissions) {
-            Ok(_) => match self.write_file("/programs/mode7test", mode7test) {
-                Ok(_) => serial_println!("Created and wrote mode7test successfully"),
+        match self.create_file("/programs/hello", exec_permissions) {
+            Ok(_) => match self.write_file("/programs/hello", hello) {
+                Ok(_) => serial_println!("Created and wrote hello successfully"),
                 Err(e) => {
-                    serial_println!("Failed to write mode7test data: {:?}", e);
+                    serial_println!("Failed to write hello data: {:?}", e);
                     return Err(e);
                 }
             },
             Err(e) => {
-                serial_println!("Failed to create mode7test file: {:?}", e);
+                serial_println!("Failed to create hello file: {:?}", e);
                 return Err(e);
             }
         }

@@ -492,36 +492,36 @@ impl Shell {
     fn execute_command(&mut self, command: &str, args: &[String]) -> ShellResult {
         serial_println!("Shell: Starting command execution for '{}'", command);
     
-        if command == "mode7test" {
-            serial_println!("Shell: Detected mode7test command");
-            let command_path = "/programs/mode7test";
+        if command == "hello" {
+            serial_println!("Shell: Detected hello command");
+            let command_path = "/programs/hello";
             let mut fs = FILESYSTEM.lock();
             
-            serial_println!("Shell: Checking mode7test file status");
+            serial_println!("Shell: Checking hello file status");
             match fs.stat(command_path) {
                 Ok(stats) => {
-                    serial_println!("Shell: mode7test file found");
+                    serial_println!("Shell: hello file found");
                     if !stats.permissions.execute {
-                        serial_println!("Shell: mode7test lacks execute permission");
+                        serial_println!("Shell: hello lacks execute permission");
                         self.display.display_error(&ShellError::PermissionDenied);
                         return Err(ShellError::PermissionDenied);
                     }
     
-                    serial_println!("Shell: Reading mode7test file");
+                    serial_println!("Shell: Reading hello file");
                     let data = match fs.read_file(command_path) {
                         Ok(data) => {
-                            serial_println!("Shell: Successfully read mode7test data ({} bytes)", data.len());
+                            serial_println!("Shell: Successfully read hello data ({} bytes)", data.len());
                             data
                         },
                         Err(e) => {
-                            serial_println!("Shell: Failed to read mode7test data: {:?}", e);
+                            serial_println!("Shell: Failed to read hello data: {:?}", e);
                             self.display.display_error(&ShellError::ExecutionFailed);
                             return Err(ShellError::ExecutionFailed);
                         }
                     };
                     
                     drop(fs);
-                    serial_println!("Shell: Creating new process for mode7test");
+                    serial_println!("Shell: Creating new process for hello");
     
                     let mut process_list = PROCESS_LIST.lock();
                     process_list.debug_process_list();
@@ -539,7 +539,7 @@ impl Shell {
                             if let Some(mm) = mm_lock.as_mut() {
                                 match Process::new_user(mm) {
                                     Ok(mut process) => {
-                                        serial_println!("Shell: Setting up mode7test process");
+                                        serial_println!("Shell: Setting up hello process");
                                         process.set_instruction_pointer(data.as_ptr() as u64);
                                         process.set_state(ProcessState::Ready);
                                         
@@ -559,10 +559,10 @@ impl Shell {
                                             return Err(ShellError::ExecutionFailed);
                                         }
                                         
-                                        serial_println!("Shell: Adding mode7test process to process list");
+                                        serial_println!("Shell: Adding hello process to process list");
                                         match process_list.add(process) {
                                             Ok(_) => {
-                                                serial_println!("Shell: Successfully added mode7test process");
+                                                serial_println!("Shell: Successfully added hello process");
                                                 if let Some(current_proc) = process_list.current_mut() {
                                                     serial_println!("Shell: Setting current process to blocked");
                                                     current_proc.set_state(ProcessState::Blocked);
@@ -570,13 +570,13 @@ impl Shell {
                                                 Ok(ExitCode::Success)
                                             },
                                             Err(e) => {
-                                                serial_println!("Shell: Failed to add mode7test process: {:?}", e);
+                                                serial_println!("Shell: Failed to add hello process: {:?}", e);
                                                 Err(ShellError::ExecutionFailed)
                                             }
                                         }
                                     },
                                     Err(e) => {
-                                        serial_println!("Shell: Failed to create mode7test process: {:?}", e);
+                                        serial_println!("Shell: Failed to create hello process: {:?}", e);
                                         Err(ShellError::ExecutionFailed)
                                     }
                                 }
@@ -609,7 +609,7 @@ impl Shell {
                     }
                 },
                 Err(e) => {
-                    serial_println!("Shell: mode7test file not found: {:?}", e);
+                    serial_println!("Shell: hello file not found: {:?}", e);
                     return self.executor.execute(command, args);
                 }
             }
