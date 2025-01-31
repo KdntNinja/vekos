@@ -17,29 +17,27 @@
 use core::arch::asm;
 use crate::{
     memory::{MemoryManager, MemoryError},
-    syscall::{FileDescriptorTable, ProcessMemory},
+    syscall::{ProcessMemory},
     serial_println,
 };
 use x86_64::{
     VirtAddr,
-    structures::paging::{PageTableFlags, Page, PhysFrame},
-    registers::rflags::RFlags,
+    structures::paging::{Page, PhysFrame},
 };
 
 use crate::println;
-use crate::format;
 use crate::MEMORY_MANAGER;
+use crate::gdt::GDT;
+use x86_64::structures::paging::FrameAllocator;
+use x86_64::structures::paging::PageTableFlags;
 use crate::tsc;
+use crate::elf;
 use crate::memory::SWAPPED_PAGES;
-use crate::memory::UserSpaceRegion;
-use crate::verification::{Hash, OperationProof, Verifiable, VerificationError, Operation, ProcessOpType, ProofData, ProcessProof};
+use crate::verification::{Hash, OperationProof, Verifiable, VerificationError, Operation, ProofData, ProcessProof};
 use crate::hash;
-use crate::verification::VERIFICATION_REGISTRY;
 use crate::memory::PAGE_REF_COUNTS;
 use alloc::string::String;
 use x86_64::structures::paging::FrameDeallocator;
-use x86_64::structures::paging::Size4KiB;
-use x86_64::structures::paging::FrameAllocator;
 use crate::print;
 use x86_64::structures::paging::Mapper;
 use crate::signals;
@@ -50,6 +48,7 @@ use lazy_static::lazy_static;
 use alloc::vec;
 use alloc::collections::BTreeMap;
 
+static TOP_OF_KERNEL_STACK: AtomicU64 = AtomicU64::new(0);
 const KERNEL_STACK_SIZE: usize = 16 * 1024; 
 pub const USER_STACK_SIZE: usize = 1024 * 1024; 
 pub const USER_STACK_TOP: u64 = 0x0000_7FFF_FFFF_0000;
@@ -83,14 +82,6 @@ impl ProcessGroupId {
     pub fn new() -> Self {
         Self(NEXT_PGID.fetch_add(1, Ordering::SeqCst))
     }
-
-    pub fn as_u64(&self) -> u64 {
-        self.0
-    }
-
-    pub fn from_u64(id: u64) -> Self {
-        Self(id)
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -100,61 +91,13 @@ impl SessionId {
     pub fn new() -> Self {
         Self(NEXT_SID.fetch_add(1, Ordering::SeqCst))
     }
-
-    pub fn as_u64(&self) -> u64 {
-        self.0
-    }
-
-    pub fn from_u64(id: u64) -> Self {
-        Self(id)
-    }
 }
 
 #[derive(Debug)]
 pub struct Session {
     id: SessionId,
     leader: ProcessId,
-    controlling_terminal: Option<usize>,
-    foreground_group: Option<ProcessGroupId>,
     groups: Vec<ProcessGroupId>,
-}
-
-impl Session {
-    pub fn new(leader: ProcessId, group: ProcessGroupId) -> Self {
-        Self {
-            id: SessionId::new(),
-            leader,
-            controlling_terminal: None,
-            foreground_group: Some(group),
-            groups: vec![group],
-        }
-    }
-
-    pub fn add_group(&mut self, group: ProcessGroupId) {
-        if !self.groups.contains(&group) {
-            self.groups.push(group);
-        }
-    }
-
-    pub fn remove_group(&mut self, group: ProcessGroupId) {
-        self.groups.retain(|&g| g != group);
-        if Some(group) == self.foreground_group && !self.groups.is_empty() {
-            self.foreground_group = Some(self.groups[0]);
-        }
-    }
-
-    pub fn set_foreground_group(&mut self, group: ProcessGroupId) -> bool {
-        if self.groups.contains(&group) {
-            self.foreground_group = Some(group);
-            true
-        } else {
-            false
-        }
-    }
-
-    pub fn get_foreground_group(&self) -> Option<ProcessGroupId> {
-        self.foreground_group
-    }
 }
 
 #[derive(Debug)]
@@ -173,26 +116,12 @@ impl ProcessGroup {
         }
     }
 
-    pub fn add_member(&mut self, pid: ProcessId) {
-        if !self.members.contains(&pid) {
-            self.members.push(pid);
-        }
-    }
-
     pub fn remove_member(&mut self, pid: ProcessId) {
         self.members.retain(|&p| p != pid);
     }
 
     pub fn get_members(&self) -> &[ProcessId] {
         &self.members
-    }
-
-    pub fn get_leader(&self) -> ProcessId {
-        self.leader
-    }
-
-    pub fn id(&self) -> ProcessGroupId {
-        self.id
     }
 }
 
@@ -232,9 +161,6 @@ pub struct ProcessContext {
     pub cr2: u64,
     
     pub pmc0: u64,
-    pub pmc1: u64,
-    pub pmc2: u64,
-    pub pmc3: u64,
 }
 
 impl ProcessContext {
@@ -244,7 +170,7 @@ impl ProcessContext {
             fxsave_area: [0; 512],
             dr0: 0, dr1: 0, dr2: 0, dr3: 0, dr6: 0, dr7: 0,
             cr2: 0,
-            pmc0: 0, pmc1: 0, pmc2: 0, pmc3: 0,
+            pmc0: 0,
         }
     }
 
@@ -356,9 +282,9 @@ pub struct Registers {
     pub r14: u64,
     pub r15: u64,
     pub rip: u64,
-    pub rflags: u64,
     pub cs: u64,
     pub ss: u64,
+    pub rflags: u64,
 }
 
 impl Registers {
@@ -369,9 +295,9 @@ impl Registers {
             r8: 0, r9: 0, r10: 0, r11: 0,
             r12: 0, r13: 0, r14: 0, r15: 0,
             rip: 0,
-            rflags: RFlags::INTERRUPT_FLAG.bits(),
             cs: 0x23, 
             ss: 0x1B, 
+            rflags: 0x202,
         }
     }
 
@@ -460,7 +386,6 @@ pub struct Process {
     user_stack_bottom: Option<VirtAddr>,
     pub current_dir: String,
     pub memory: ProcessMemory,
-    pub fd_table: FileDescriptorTable,
     pub relations: ProcessRelations,
     pub signal_state: signals::SignalState,
     pub signal_stack: Option<signals::SignalStack>,
@@ -511,7 +436,6 @@ impl Process {
             user_stack_bottom: None,
             current_dir: String::from("/"), 
             memory: ProcessMemory::new(),
-            fd_table: FileDescriptorTable::new(),
             relations: ProcessRelations::new(),
             signal_state: signals::SignalState::new(),
             signal_stack: None,
@@ -533,111 +457,119 @@ impl Process {
         Ok(process)
     }
 
-    pub fn wait_for_child(&mut self, target_pid: Option<ProcessId>) -> Result<(ProcessId, i32), &'static str> {
+    pub fn switch_to_user_mode(&mut self) {
+        use x86_64::instructions::segmentation::{Segment, CS, SS};
         
-        let children = self.get_children();
-        if children.is_empty() {
-            return Err("No children to wait for");
+        serial_println!("\nProcess Switch Debug:");
+        serial_println!("CPU State Debug:"); 
+        serial_println!("RIP: {:#x}", self.context.regs.rip);
+        serial_println!("RSP: {:#x}", self.context.regs.rsp);
+        serial_println!("CS: {:#x}", self.context.regs.cs);
+        serial_println!("SS: {:#x}", self.context.regs.ss);
+        serial_println!("RFLAGS: {:#x}", self.context.regs.rflags);
+
+        let user_cs = self.context.regs.cs;
+        let user_ss = self.context.regs.ss;
+        let user_rflags = self.context.regs.rflags;
+        let user_rip = self.context.regs.rip;
+        let user_rsp = self.context.regs.rsp;
+    
+        unsafe {
+            x86_64::instructions::interrupts::disable();
+
+            asm!(
+                "mov gs:[{0}], rsp",
+                in(reg) TOP_OF_KERNEL_STACK.load(core::sync::atomic::Ordering::SeqCst),
+                options(nostack)
+            );
+
+            asm!(
+                "mov rcx, {}",
+                "mov r11, {}",
+                "mov rsp, {}",
+
+                "swapgs",
+
+                "sysretq",
+                in(reg) user_rip,
+                in(reg) user_rflags,
+                in(reg) user_rsp,
+                options(noreturn)
+            );
         }
+    }
 
-        
-        let mut process_list = PROCESS_LIST.lock();
-        for &child_pid in &children {
-            
-            if let Some(target) = target_pid {
-                if child_pid != target {
-                    continue;
-                }
-            }
+    pub fn load_program(&mut self, data: &[u8], memory_manager: &mut MemoryManager) -> Result<(), MemoryError> {
+        let stack_start = VirtAddr::new(USER_STACK_TOP - USER_STACK_SIZE as u64);
+        let stack_pages = USER_STACK_SIZE / 4096;
 
-            if let Some(child) = process_list.get_by_id(child_pid) {
-                if let ProcessState::Zombie(status) = child.state() {
-                    
-                    drop(process_list);
-                    return Ok((child_pid, status));
-                }
-            }
-        }
-
-        
-        if let Some(current) = process_list.current_mut() {
-            current.set_state(ProcessState::Blocked);
+        let flags = PageTableFlags::PRESENT 
+            | PageTableFlags::WRITABLE 
+            | PageTableFlags::USER_ACCESSIBLE;
             
-            
-            for &child_pid in &children {
-                if let Some(target) = target_pid {
-                    if child_pid != target {
-                        continue;
-                    }
-                }
+        for i in 0..stack_pages {
+            let page = Page::containing_address(stack_start + (i * 4096) as u64);
+            let frame = memory_manager.frame_allocator
+                .allocate_frame()
+                .ok_or(MemoryError::FrameAllocationFailed)?;
                 
-                if let Some(child) = process_list.get_mut_by_id(child_pid) {
-                    child.add_waiter(self.id());
-                }
+            unsafe {
+                memory_manager.map_page(page, frame, flags)?;
+                core::ptr::write_bytes(
+                    page.start_address().as_mut_ptr::<u8>(),
+                    0,
+                    4096
+                );
             }
         }
+        
+        self.user_stack_bottom = Some(stack_start);
 
-        Err("No children have exited")
+        let entry_point = elf::load_elf(data, memory_manager)?;
+
+        self.context.regs = Registers::new();
+        self.context.regs.rip = entry_point.as_u64();
+        self.context.regs.rsp = USER_STACK_TOP - 8;
+        self.context.regs.cs = 0x1b;
+        self.context.regs.ss = 0x23;
+
+        let rflags = 0x202;
+        self.context.regs.rflags = rflags;
+        
+        Ok(())
     }
 
     fn compute_process_state_hash(&self) -> Hash {
         
         let mut state_components = Vec::new();
-    
         
         state_components.push(hash::hash_memory(
             VirtAddr::new(&self.id as *const _ as u64),
             core::mem::size_of::<ProcessId>()
         ));
     
-        
         state_components.push(hash::hash_memory(
             VirtAddr::new(&self.state as *const _ as u64),
             core::mem::size_of::<ProcessState>()
         ));
-    
         
         state_components.push(Hash(self.page_table.start_address().as_u64()));
     
-        
         for allocation in &self.memory.allocations {
             state_components.push(hash::hash_memory(
                 allocation.address,
                 allocation.size
             ));
         }
-    
         
         hash::combine_hashes(&state_components)
     }
     
-    pub fn verify_state_transition(&mut self, new_state: ProcessState) -> Result<OperationProof, VerificationError> {
-        let operation = Operation::Process {
-            pid: self.id.0,
-            operation_type: ProcessOpType::StateChange,
-        };
-    
-        let proof = self.generate_proof(operation)?;
-    
-        
-        self.state = new_state;
-    
-        
-        self.state_hash.store(proof.new_state.0, Ordering::SeqCst);
-    
-        
-        VERIFICATION_REGISTRY.lock().register_proof(proof.clone());
-    
-        Ok(proof)
-    }
-
     pub fn exit(&mut self, status: i32, memory_manager: &mut MemoryManager) -> Result<(), MemoryError> {
         
         self.cleanup(memory_manager)?;
         
-        
         self.make_zombie(status);
-        
         
         let mut process_list = PROCESS_LIST.lock();
         if let Some(parent_pid) = self.relations.parent {
@@ -651,127 +583,14 @@ impl Process {
         Ok(())
     }
 
-    pub fn reap_zombies(&mut self) -> Vec<(ProcessId, i32)> {
-        let mut reaped = Vec::new();
-        let children = self.get_children();
-        
-        let mut process_list = PROCESS_LIST.lock();
-        for child_pid in children {
-            if let Some(child) = process_list.get_by_id(child_pid) {
-                if let ProcessState::Zombie(status) = child.state() {
-                    reaped.push((child_pid, status));
-                }
-            }
-        }
-        
-        for (pid, _) in &reaped {
-            process_list.remove(*pid);
-        }
-        
-        reaped
-    }
-
-    pub fn new_user(memory_manager: &mut MemoryManager) -> Result<Self, MemoryError> {
-        let mut process = Self::new(memory_manager)?;
-
-        let user_stack_bottom = VirtAddr::new(USER_STACK_TOP - USER_STACK_SIZE as u64);
-        process.user_stack_bottom = Some(user_stack_bottom);
-    
-        let stack_region = UserSpaceRegion::new(
-            user_stack_bottom,
-            USER_STACK_SIZE,
-            PageTableFlags::PRESENT | PageTableFlags::WRITABLE | PageTableFlags::USER_ACCESSIBLE,
-        );
-        
-        if let Err(e) = memory_manager.map_user_region(stack_region) {
-            if let Err(cleanup_err) = process.cleanup(memory_manager) {
-                serial_println!("Warning: Failed to clean up after stack mapping failure: {:?}", cleanup_err);
-            }
-            return Err(e);
-        }
-        
-        if let Some(stack_top) = process.user_stack_top() {
-            let stack_page = Page::<Size4KiB>::containing_address(stack_top);
-            if memory_manager.page_table.translate_page(stack_page).is_err() {
-                if let Err(cleanup_err) = process.cleanup(memory_manager) {
-                    serial_println!("Warning: Failed to clean up after stack verification failure: {:?}", cleanup_err);
-                }
-                return Err(MemoryError::PageMappingFailed);
-            }
-        }
-
-        let stack_flags = PageTableFlags::PRESENT 
-            | PageTableFlags::WRITABLE 
-            | PageTableFlags::USER_ACCESSIBLE;
-
-        let pages = USER_STACK_SIZE / 4096;
-        for i in 0..pages {
-            let stack_page = Page::containing_address(user_stack_bottom + (i * 4096) as u64);
-            let frame = memory_manager.frame_allocator
-                .allocate_frame()
-                .ok_or(MemoryError::FrameAllocationFailed)?;
-
-            unsafe {
-                memory_manager.map_page(stack_page, frame, stack_flags)?;
-
-                core::ptr::write_bytes(
-                    stack_page.start_address().as_mut_ptr::<u8>(),
-                    0,
-                    4096
-                );
-            }
-
-            serial_println!("Verifying stack mappings...");
-            for i in 0..pages {
-                let page = Page::<Size4KiB>::containing_address(user_stack_bottom + (i * 4096) as u64);
-                match memory_manager.page_table.translate_page(page) {
-                    Ok(frame) => {
-                        serial_println!("Stack page {:#x} mapped to frame {:#x}", 
-                                    page.start_address().as_u64(),
-                                    frame.start_address().as_u64());
-                    },
-                    Err(e) => {
-                        serial_println!("Failed to verify stack page {:#x}: {:?}",
-                                    page.start_address().as_u64(), e);
-                        return Err(MemoryError::PageMappingFailed);
-                    }
-                }
-            }
-        }
-
-        let text_flags = PageTableFlags::PRESENT 
-            | PageTableFlags::USER_ACCESSIBLE;
-        
-        let data_flags = PageTableFlags::PRESENT 
-            | PageTableFlags::WRITABLE 
-            | PageTableFlags::USER_ACCESSIBLE;
-
-        process.registers.rflags = RFlags::INTERRUPT_FLAG.bits();
-        process.registers.cs = 0x23;
-        process.registers.ss = 0x1B;
-    
-        Ok(process)
-    }
-
     pub fn make_zombie(&mut self, status: i32) {
         self.exit_status = Some(status);
         self.state = ProcessState::Zombie(status);
-        
         
         for waiting_pid in self.wait_queue.drain(..) {
             if let Some(waiting_process) = PROCESS_LIST.lock().get_mut_by_id(waiting_pid) {
                 waiting_process.set_state(ProcessState::Ready);
             }
-        }
-    }
-
-    pub fn get_exit_status(&self) -> Option<i32> {
-        self.exit_status
-    }
-
-    pub fn add_waiter(&mut self, pid: ProcessId) {
-        if !self.wait_queue.contains(&pid) {
-            self.wait_queue.push(pid);
         }
     }
 
@@ -846,25 +665,18 @@ impl Process {
                 }
             }
         }
-    
         
         memory_manager.page_table_cache.lock().release_page_table(self.page_table);
-    
         
         unsafe {
             memory_manager.frame_allocator.deallocate_frame(self.page_table);
         }
-    
         
         self.memory.total_allocated = 0;
         self.memory.heap_size = 0;
         self.remaining_time_slice = 0;
     
         Ok(())
-    }
-
-    pub fn get_parent(&self) -> Option<ProcessId> {
-        self.relations.parent
     }
 
     pub fn get_children(&self) -> Vec<ProcessId> {
@@ -883,92 +695,6 @@ impl Process {
         
         children
     }
-
-    pub fn update_sibling_links(process_list: &mut ProcessList, child_id: ProcessId) {
-        
-        let parent_id = process_list.get_by_id(child_id)
-            .and_then(|child| child.relations.parent);
-
-        if let Some(parent_id) = parent_id {
-            let first_child = process_list.get_by_id(parent_id)
-                .and_then(|parent| parent.relations.first_child);
-
-            if let Some(first_child_id) = first_child {
-                if first_child_id != child_id {
-                    
-                    let mut current = first_child_id;
-                    let mut last_sibling_id = None;
-
-                    while let Some(process) = process_list.get_by_id(current) {
-                        if process.relations.next_sibling.is_none() {
-                            last_sibling_id = Some(current);
-                            break;
-                        }
-                        if let Some(next) = process.relations.next_sibling {
-                            current = next;
-                        } else {
-                            break;
-                        }
-                    }
-
-                    
-                    if let Some(last) = last_sibling_id {
-                        if let Some(last_sibling) = process_list.get_mut_by_id(last) {
-                            last_sibling.relations.next_sibling = Some(child_id);
-                        }
-                        if let Some(child) = process_list.get_mut_by_id(child_id) {
-                            child.relations.prev_sibling = Some(last);
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn add_child(&mut self, child_pid: ProcessId) {
-        let mut current = self.relations.first_child;
-        let mut last_sibling = None;
-        
-        while let Some(id) = current {
-            let process_list = PROCESS_LIST.lock();
-            if let Some(child) = process_list.get_by_id(id) {
-                if child.relations.next_sibling.is_none() {
-                    last_sibling = Some(id);
-                    break;
-                }
-                current = child.relations.next_sibling;
-            } else {
-                break;
-            }
-        }
-        
-        if let Some(last_id) = last_sibling {
-            let mut process_list = PROCESS_LIST.lock();
-            if let Some(last_child) = process_list.get_mut_by_id(last_id) {
-                last_child.relations.next_sibling = Some(child_pid);
-            }
-        } else {
-            self.relations.first_child = Some(child_pid);
-        }
-    }
-
-    pub fn finalize(&mut self, memory_manager: &mut MemoryManager) -> Result<(), MemoryError> {
-        
-        self.cleanup(memory_manager)?;
-        
-        
-        self.signal_state = signals::SignalState::new();
-        
-        
-        self.fd_table = FileDescriptorTable::new();
-        
-        Ok(())
-    }
-
-    pub fn set_parent(&mut self, parent_id: Option<ProcessId>) {
-        self.relations.parent = parent_id;
-    }
-
     
     pub fn id(&self) -> ProcessId {
         self.id
@@ -994,40 +720,6 @@ impl Process {
         self.user_stack_bottom.map(|_| VirtAddr::new(USER_STACK_TOP))
     }
 
-    pub fn registers(&mut self) -> &mut Registers {
-        &mut self.registers
-    }
-
-    pub fn set_instruction_pointer(&mut self, rip: u64) {
-        serial_println!("Setting instruction pointer for process {} to {:#x}", 
-            self.id.0, rip);
-        self.registers.rip = rip;
-    }
-
-    pub fn debug_execution_state(&self) -> String {
-        format!(
-            "Process {} Execution State:\n\
-             Instruction Pointer: {:#x}\n\
-             Stack Pointer: {:#x}\n\
-             User Stack: {:?}\n\
-             Page Table: {:?}\n\
-             State: {:?}\n\
-             Memory Allocations: {} ({} bytes total)",
-            self.id.0,
-            self.registers.rip,
-            self.registers.rsp,
-            self.user_stack_bottom,
-            self.page_table,
-            self.state,
-            self.memory.allocations.len(),
-            self.memory.total_allocated
-        )
-    }
-
-    pub fn set_stack_pointer(&mut self, rsp: u64) {
-        self.registers.rsp = rsp;
-    }
-
     pub fn save_context(&mut self) {
         self.registers.save();
     }
@@ -1044,7 +736,6 @@ impl Verifiable for Process {
                     return Err(VerificationError::InvalidOperation);
                 }
 
-                
                 let state_hash = self.compute_process_state_hash();
                 
                 let proof_data = ProofData::Process(ProcessProof {
@@ -1053,10 +744,8 @@ impl Verifiable for Process {
                     state_hash,
                 });
 
-                
                 let signature = [0u8; 64];
-                
-                
+                                
                 let new_state = Hash(prev_state.0 ^ state_hash.0);
                 
                 Ok(OperationProof {
@@ -1157,25 +846,6 @@ impl ProcessList {
                 child.relations.parent = to_pid;
             }
         }
-    }
-
-    fn get_process_children(&self, pid: ProcessId) -> Vec<ProcessId> {
-        self.get_by_id(pid)
-            .map(|process| {
-                let mut children = Vec::new();
-                let mut current = process.relations.first_child;
-                
-                while let Some(child_id) = current {
-                    children.push(child_id);
-                    if let Some(child) = self.get_by_id(child_id) {
-                        current = child.relations.next_sibling;
-                    } else {
-                        break;
-                    }
-                }
-                children
-            })
-            .unwrap_or_default()
     }
 
     pub fn cleanup_zombies(&mut self) {
@@ -1285,39 +955,6 @@ impl ProcessList {
         self.reparent_children(pid, Some(ProcessId(1)));
     }
 
-    pub fn create_group(&mut self, leader_pid: ProcessId) -> Option<ProcessGroupId> {
-        
-        let group = ProcessGroup::new(leader_pid);
-        let group_id = group.id();
-        self.process_groups.insert(group_id, group);
-        Some(group_id)
-    }
-
-    pub fn add_child(&mut self, parent_pid: ProcessId, child_pid: ProcessId) {
-        if let Some(parent) = self.get_mut_by_id(parent_pid) {
-            parent.add_child(child_pid);
-        }
-    }
-
-    pub fn add_to_group(&mut self, pid: ProcessId, group_id: ProcessGroupId) -> Result<(), &'static str> {
-        
-        if !self.process_groups.contains_key(&group_id) {
-            return Err("Process group not found");
-        }
-        
-        
-        let process = self.get_mut_by_id(pid)
-            .ok_or("Process not found")?;
-        process.group_id = group_id;
-        
-        
-        if let Some(group) = self.process_groups.get_mut(&group_id) {
-            group.add_member(pid);
-        }
-        
-        Ok(())
-    }
-
     pub fn remove_from_group(&mut self, pid: ProcessId, group_id: ProcessGroupId) -> Result<(), &'static str> {
         if let Some(group) = self.process_groups.get_mut(&group_id) {
             group.remove_member(pid);
@@ -1336,14 +973,6 @@ impl ProcessList {
 
     pub fn iter_processes_mut(&mut self) -> impl Iterator<Item = &mut Process> {
         self.processes.iter_mut()
-    }
-
-    pub fn group_contains_key(&self, group_id: &ProcessGroupId) -> bool {
-        self.process_groups.contains_key(group_id)
-    }
-
-    pub fn group_get_mut(&mut self, group_id: &ProcessGroupId) -> Option<&mut ProcessGroup> {
-        self.process_groups.get_mut(group_id)
     }
 
     pub fn get_group_members(&self, group_id: ProcessGroupId) -> Option<Vec<ProcessId>> {
@@ -1374,19 +1003,6 @@ impl ProcessList {
                 serial_println!("  Processes exist but no current set!");
             }
             None
-        }
-    } 
-
-    pub fn debug_process_list(&self) {
-        serial_println!("DEBUG: Process List Status:");
-        serial_println!("  Total processes: {}", self.processes.len());
-        serial_println!("  Current index: {:?}", self.current);
-        for (i, process) in self.processes.iter().enumerate() {
-            serial_println!("  Process {}: ID={}, State={:?}", 
-                i,
-                process.id().0,
-                process.state()
-            );
         }
     }
 
@@ -1427,31 +1043,6 @@ impl ProcessList {
         } else {
             None
         }
-    }
-
-    pub fn find_next_ready(&mut self) -> Option<ProcessId> {
-        
-        self.cleanup_zombies();
-        
-        let start = self.current.map(|i| i + 1).unwrap_or(0);
-        
-        
-        for i in start..self.processes.len() {
-            if self.processes[i].state() == ProcessState::Ready {
-                self.current = Some(i);
-                return Some(self.processes[i].id());
-            }
-        }
-        
-        
-        for i in 0..start {
-            if self.processes[i].state() == ProcessState::Ready {
-                self.current = Some(i);
-                return Some(self.processes[i].id());
-            }
-        }
-        
-        None
     }
 }
 

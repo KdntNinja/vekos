@@ -35,7 +35,6 @@ use crate::MEMORY_MANAGER;
 pub struct Scheduler {
     current_process: Option<ProcessId>,
     priority_scheduler: PriorityScheduler,
-    time_slice: u64,
     ticks: u64,
 }
 
@@ -44,7 +43,6 @@ impl Scheduler {
         Self {
             current_process: None,
             priority_scheduler: PriorityScheduler::new(),
-            time_slice: 100,
             ticks: 0,
         }
     }
@@ -68,29 +66,6 @@ impl Scheduler {
         
         serial_println!("Process {} transitioned from {:?} to {:?}",
             process.id().as_u64(), old_state, new_state);
-    }
-    
-    fn cleanup_zombies(&mut self) {
-        let mut process_list = PROCESS_LIST.lock();
-        let zombies: Vec<_> = process_list.iter_processes()
-            .filter(|p| matches!(p.state(), ProcessState::Zombie(_)))
-            .map(|p| p.id())
-            .collect();
-
-        for zombie_pid in zombies {
-            
-            if let Some(mut zombie) = process_list.remove(zombie_pid) {
-                let mut mm_lock = MEMORY_MANAGER.lock();
-                if let Some(ref mut mm) = *mm_lock {
-                    if let Err(e) = zombie.cleanup(mm) {
-                        serial_println!("Warning: Failed to clean up zombie process {}: {:?}", 
-                            zombie_pid.0, e);
-                    }
-                }
-                
-                process_list.cleanup_process_relations(zombie_pid);
-            }
-        }
     }
 
     pub fn add_process(&mut self, process: Process) {
@@ -190,7 +165,7 @@ impl Scheduler {
     }
 
     unsafe fn switch_to(&self, next: &mut Process) {
-        serial_println!("\nProcess Switch Debug:");
+        serial_println!("\nScheduler Process Switch Debug:");
         serial_println!("Switching to process {} at instruction {:#x}", 
             next.id().0, 
             next.context.regs.rip);

@@ -398,10 +398,6 @@ impl VerificationRegistry {
     pub fn get_proofs(&self) -> &[OperationProof] {
         &self.proofs
     }
-
-    pub fn current_state(&self) -> Hash {
-        Hash(self.current_state.load(Ordering::SeqCst))
-    }
 }
 
 lazy_static::lazy_static! {

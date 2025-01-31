@@ -17,13 +17,18 @@
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 use crate::{print, println};
 use pic8259::ChainedPics;
+use crate::boot_verification::ComponentType::GDT;
+use x86_64::VirtAddr;
+use x86_64::PrivilegeLevel;
+use core::arch::asm;
+use crate::elf;
 use spin;
 use lazy_static::lazy_static;
+use x86_64::structures::paging::FrameAllocator;
 use crate::FRAMEBUFFER;
 use pc_keyboard::{layouts, HandleControl, Keyboard, ScancodeSet1, KeyCode};
 use crate::time::SYSTEM_TIME;
 use crate::scheduler::SCHEDULER;
-use crate::vga_buffer::WRITER;
 use crate::serial_println;
 use crate::MEMORY_MANAGER;
 use crate::process::PROCESS_LIST;
@@ -33,13 +38,10 @@ use crate::memory::PageFault;
 
 pub const PIC_1_OFFSET: u8 = 32;
 pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
+pub const SYSCALL_INTERRUPT_INDEX: u8 = 0x80;
 
 pub static PICS: spin::Mutex<ChainedPics> =
     spin::Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
-
-const BACKSPACE: u8 = 0x08;
-const ENTER: u8 = 0x0D;
-const ESC: u8 = 0x1B;
 
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
@@ -47,6 +49,7 @@ pub enum InterruptIndex {
     Timer = PIC_1_OFFSET,
     Keyboard = PIC_1_OFFSET + 1,
     Vsync = PIC_1_OFFSET + 5,
+    Syscall = 0x80,
 }
 
 impl InterruptIndex {
@@ -68,6 +71,7 @@ lazy_static! {
                 .set_handler_fn(double_fault_handler)
                 .set_stack_index(crate::gdt::DOUBLE_FAULT_IST_INDEX);
         }
+        idt.general_protection_fault.set_handler_fn(general_protection_fault_handler);
         idt.page_fault.set_handler_fn(page_fault_handler);
         idt[InterruptIndex::Timer.as_usize()]
             .set_handler_fn(timer_interrupt_handler);
@@ -78,6 +82,7 @@ lazy_static! {
         idt
     };
 }
+
 lazy_static! {
     static ref KEYBOARD: spin::Mutex<Keyboard<layouts::Jis109Key, ScancodeSet1>> = spin::Mutex::new(
         Keyboard::new(ScancodeSet1::new(), layouts::Jis109Key, HandleControl::Ignore)
@@ -137,24 +142,6 @@ extern "x86-interrupt" fn vsync_interrupt_handler(
     }
 }
 
-pub fn init_idt() {
-    IDT.load();
-    
-    unsafe {
-        PICS.lock().write_masks(0xdd, 0xff);
-        PICS.lock().initialize();
-        reset_keyboard_controller();
-        
-        for _ in 0..10000 {
-            core::hint::spin_loop();
-        }
-        
-        x86_64::instructions::interrupts::enable();
-    }
-    
-    serial_println!("IDT, PIC, and keyboard initialization completed");
-}
-
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
     println!("EXCEPTION: BREAKPOINT\n{:#?}", stack_frame);
 }
@@ -165,6 +152,15 @@ extern "x86-interrupt" fn double_fault_handler(
     panic!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
 }
 
+extern "x86-interrupt" fn general_protection_fault_handler(
+    stack_frame: InterruptStackFrame,
+    error_code: u64,
+) {
+    serial_println!("EXCEPTION: GENERAL PROTECTION FAULT");
+    serial_println!("Error code: {:?}", error_code);
+    serial_println!("Stack frame: {:#?}", stack_frame);
+    loop {}
+}
 
 extern "x86-interrupt" fn page_fault_handler(
     stack_frame: InterruptStackFrame,
@@ -178,8 +174,10 @@ extern "x86-interrupt" fn page_fault_handler(
     let user = error_code.contains(PageFaultErrorCode::USER_MODE);
     let instruction_fetch = error_code.contains(PageFaultErrorCode::INSTRUCTION_FETCH);
     
+    serial_println!("PAGE FAULT");
     serial_println!("Page fault at address: {:#x}", fault_addr.as_u64());
     serial_println!("Error code: {:?}", error_code);
+    serial_println!("Stack Frame: {:#x?}", stack_frame);
     
     let mut handled = false;
     
@@ -253,15 +251,6 @@ extern "x86-interrupt" fn timer_interrupt_handler(
     }
 }
 
-fn handle_backspace() {
-    let mut writer = WRITER.lock();
-    if writer.column_position > 0 {
-        writer.column_position -= 1;
-        writer.write_byte(b' ');
-        writer.column_position -= 1;
-    }
-}
-
 extern "x86-interrupt" fn keyboard_interrupt_handler(
     _stack_frame: InterruptStackFrame)
 {
@@ -326,4 +315,25 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(
             }
         }
     }
+}
+
+pub fn init_idt() {
+    IDT.load();
+    
+    unsafe {
+        PICS.lock().write_masks(0xfd, 0xff);
+        PICS.lock().initialize();
+        
+        
+        reset_keyboard_controller();
+        
+        
+        for _ in 0..10000 {
+            core::hint::spin_loop();
+        }
+        
+        x86_64::instructions::interrupts::enable();
+    }
+    
+    serial_println!("IDT, PIC, and keyboard initialization completed");
 }

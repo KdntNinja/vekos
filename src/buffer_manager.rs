@@ -222,14 +222,6 @@ impl BufferManager {
         self.stats.writes.fetch_add(1, Ordering::Relaxed);
     }
 
-    fn find_buffer_to_evict(&self) -> Option<usize> {
-        self.buffers.iter()
-            .enumerate()
-            .filter(|(_, b)| !b.pinned)
-            .min_by_key(|(_, b)| (b.access_count, b.last_access))
-            .map(|(i, _)| i)
-    }
-
     pub fn get_stats(&self) -> (u64, u64, u64, u64) {
         (
             self.stats.hits.load(Ordering::Relaxed),

@@ -64,37 +64,6 @@ impl ShellDisplay {
         })
     }
 
-    pub fn handle_keyboard_input(&mut self, byte: u8) -> bool {
-        match byte {
-            8 | 127 => {
-                if self.cursor_position > 0 {
-                    self.input_buffer.remove(self.cursor_position - 1);
-                    self.cursor_position -= 1;
-                    self.redraw_line(&self.input_buffer, self.cursor_position);
-                    true
-                } else {
-                    false
-                }
-            },
-            b'\n' => {
-                let mut writer = WRITER.lock();
-                writer.write_byte(b'\n');
-                true
-            },
-            32..=126 => {
-                if self.cursor_position < BUFFER_WIDTH - self.prompt.len() {
-                    self.input_buffer.insert(self.cursor_position, byte);
-                    self.cursor_position += 1;
-                    self.redraw_line(&self.input_buffer, self.cursor_position);
-                    true
-                } else {
-                    false
-                }
-            },
-            _ => false,
-        }
-    }
-
     pub fn clear_screen(&self) {
         use x86_64::instructions::interrupts;
         interrupts::without_interrupts(|| {
@@ -154,16 +123,17 @@ impl ShellDisplay {
             let message = match error {
                 ShellError::CommandNotFound => "Command not found",
                 ShellError::InvalidArguments => "Invalid arguments",
-                ShellError::ExecutionFailed => "Command execution failed",
-                ShellError::IOError => "Input/output error",
+                ShellError::IOError => "I/O error",
                 ShellError::PermissionDenied => "Permission denied",
                 ShellError::PathNotFound => "Path not found",
                 ShellError::InvalidPath => "Invalid path",
-                ShellError::EnvironmentError => "Environment error", 
-                ShellError::InternalError => "Internal shell error",
-                ShellError::BufferOverflow => "Input buffer overflow",
-                ShellError::SyntaxError => "Invalid command syntax",
+                ShellError::EnvironmentError => "Environment error",
+                ShellError::InternalError => "Internal error",
+                ShellError::BufferOverflow => "Buffer overflow",
+                ShellError::SyntaxError => "Syntax error",
+                ShellError::ExecutionFailed => "Execution failed",
                 ShellError::NotADirectory => "Not a directory",
+                ShellError::InvalidExecutable => "Invalid executable format",
             };
             
             writer.write_str(message).unwrap();
@@ -213,27 +183,5 @@ impl ShellDisplay {
             writer.color_code = original_color;
             writer.enable_cursor();
         });
-    }
-        
-    pub fn get_input(&self) -> String {
-        String::from_utf8_lossy(&self.input_buffer).into_owned()
-    }
-
-    pub fn clear_input(&mut self) {
-        self.input_buffer.clear();
-        self.cursor_position = 0;
-    }
-
-    pub fn handle_backspace(&self, current_pos: usize) -> usize {
-        if current_pos > 0 {
-            let mut writer = WRITER.lock();
-            if writer.column_position > self.prompt.len() {
-                writer.column_position -= 1;
-                writer.write_byte(b' ');
-                writer.column_position -= 1;
-                return current_pos - 1;
-            }
-        }
-        current_pos
     }
 }

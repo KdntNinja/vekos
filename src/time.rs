@@ -87,11 +87,6 @@ impl SystemTime {
     pub fn ticks(&self) -> u64 {
         self.ticks.load(Ordering::Relaxed)
     }
-
-    pub fn wall_time(&self) -> Timestamp {
-        let mut rtc = self.rtc.lock();
-        rtc.read_timestamp()
-    }
 }
 
 struct RealTimeClock {
@@ -108,19 +103,6 @@ impl RealTimeClock {
         };
         serial_println!("DEBUG: RealTimeClock creation complete");
         rtc
-    }
-
-    pub fn read_timestamp(&mut self) -> Timestamp {
-        serial_println!("DEBUG: Attempting to read RTC timestamp");
-        let current_ticks = SYSTEM_TIME.ticks();
-
-        if current_ticks >= self.last_update.secs * TICKS_PER_SECOND + TICKS_PER_SECOND {
-            let timestamp = self.cmos.read_time();
-            self.last_update = timestamp;
-        }
-        
-        serial_println!("DEBUG: RTC timestamp read complete");
-        self.last_update
     }
 }
 

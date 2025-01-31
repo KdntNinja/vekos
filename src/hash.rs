@@ -62,7 +62,6 @@ fn try_hardware_hash(addr: VirtAddr, size: usize) -> Option<Hash> {
             let mut hash = 0u64;
             let ptr = addr.as_ptr::<u8>();
             
-            
             core::arch::asm!(
                 "movdqu xmm0, [{0}]",
                 "sha256msg1 xmm0, xmm1",

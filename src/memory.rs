@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-use crate::{print, println, serial_println};
+use crate::{serial_println};
 use x86_64::{
     structures::paging::{
         FrameAllocator, Page, PageTable, PhysFrame, Size4KiB,
@@ -30,6 +30,7 @@ use crate::verification::{
 use crate::tsc;
 use crate::process::USER_STACK_TOP;
 use crate::hash;
+use crate::process::ProcessState;
 use crate::swap::SWAP_MANAGER;
 use x86_64::structures::paging::PageSize;
 use x86_64::structures::paging::FrameDeallocator;
@@ -48,7 +49,7 @@ use core::ops::Range;
 use alloc::vec::Vec;
 use crate::MAX_ORDER;
 use crate::PAGE_SIZE;
-use crate::process::ProcessState;
+
 use alloc::string::String;
 use alloc::format;
 use crate::lazy_static;
@@ -56,23 +57,11 @@ use alloc::collections::BTreeMap;
 
 const MAX_REGIONS: usize = 128;
 const MAX_MEMORY_REGIONS: usize = 32;
-const ZONE_DMA_START: u64 = 0x0;
 const ZONE_DMA_END: u64 = 0x1000000; 
 const ZONE_NORMAL_START: u64 = ZONE_DMA_END;
 const ZONE_NORMAL_END: u64 = 0x40000000; 
 const ZONE_HIGHMEM_START: u64 = ZONE_NORMAL_END;
-const ALLOCATION_CHUNK_SIZE: usize = 1024;
-const USER_SPACE_START: u64 = 0x0000000000000000;
-pub const USER_SPACE_END: u64 = 0x00007FFFFFFFFFFF;
 const KERNEL_SPACE_START: u64 = 0xFFFF800000000000;
-const COW_PAGE_MASK: u64 = 0x0000_FFFF_FFFF_FFFF;
-const PAGE_PRESENT: u64 = 1 << 0;
-const PAGE_WRITABLE: u64 = 1 << 1;
-const PAGE_USER: u64 = 1 << 2;
-const PAGE_ACCESSED: u64 = 1 << 5;
-const PAGE_DIRTY: u64 = 1 << 6;
-const PAGE_COW: u64 = 1 << 9;
-const COW_FLAG_MASK: u64 = 1 << 9;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ZoneType {
@@ -190,17 +179,6 @@ lazy_static! {
 }
 
 impl PageRefCount {
-    pub fn new(frame: PhysFrame) -> Self {
-        Self {
-            frame,
-            count: 1,
-        }
-    }
-
-    pub fn increment(&mut self) {
-        self.count = self.count.saturating_add(1);
-    }
-
     pub fn decrement(&mut self) -> bool {
         self.count = self.count.saturating_sub(1);
         self.count == 0
@@ -341,45 +319,6 @@ impl MemoryZone {
         self.allocate_pages(pages)
     }
 
-    pub fn allocate_large_zone(&mut self, zone_type: MemoryZoneType, pages: usize) -> Option<PhysFrame> {
-        serial_println!("Attempting large zone allocation of {} pages for {:?}", pages, zone_type);
-        
-        if self.zone_type != zone_type {
-            return None;
-        }
-        
-        
-        if pages >= LARGE_PAGE_THRESHOLD {
-            return self.allocate_large(pages);
-        }
-        
-        
-        self.allocate_pages(pages)
-    }
-
-    pub fn try_merge_blocks(&mut self) {
-        for order in 0..self.free_lists.len() - 1 {
-            let mut current = self.free_lists[order];
-            while let Some(frame) = current {
-                let buddy_addr = frame.start_address().as_u64() ^ (1 << (order + 12));
-                let buddy_frame = PhysFrame::containing_address(PhysAddr::new(buddy_addr));
-
-                if let Some(other) = self.free_lists[order] {
-                    if other == buddy_frame {
-                        self.free_lists[order] = None;
-                        
-                        let merged = PhysFrame::containing_address(PhysAddr::new(
-                            core::cmp::min(frame.start_address().as_u64(), buddy_addr)
-                        ));
-                        self.free_lists[order + 1] = Some(merged);
-                    }
-                }
-                
-                current = self.free_lists[order];
-            }
-        }
-    }
-
     pub fn allocate_pages(&mut self, count: usize) -> Option<PhysFrame> {
         serial_println!("Attempting to allocate {} pages from {:?} zone", count, self.zone_type);
         serial_println!("Zone status: {} free out of {} total pages", self.free_pages, self.total_pages);
@@ -427,30 +366,6 @@ impl MemoryZone {
         let order = (count - 1).leading_zeros() as usize;
         self.free_lists[order] = Some(frame);
         self.free_pages += count;
-    }
-
-    pub fn new_with_config(zone_type: MemoryZoneType) -> Self {
-        let config = zone_type.get_config();
-        let total_pages = config.size / 4096;
-        
-        serial_println!("Creating new MemoryZone:");
-        serial_println!("  Type: {:?}", zone_type);
-        serial_println!("  Start: {:#x}", config.start_addr);
-        serial_println!("  Size: {:#x}", config.size);
-        serial_println!("  Flags: {:?}", config.flags);
-        
-        let mut free_lists = [None; 128];
-        let base_frame = PhysFrame::containing_address(PhysAddr::new(config.start_addr));
-        free_lists[0] = Some(base_frame);
-        
-        Self {
-            zone_type,
-            start_addr: PhysAddr::new(config.start_addr),
-            size: config.size,
-            free_pages: total_pages,
-            total_pages,
-            free_lists,
-        }
     }
 }
 
@@ -523,45 +438,6 @@ impl ZoneAllocator {
         hash::combine_hashes(&zone_hashes)
     }
 
-    fn allocate_pages(&mut self, count: usize, zone_type: ZoneType) -> Option<PhysFrame> {
-        match zone_type {
-            ZoneType::DMA => self.dma_zone.as_mut()?.allocate_pages(count),
-            ZoneType::Normal => {
-                self.normal_zone.as_mut()?.allocate_pages(count)
-                    .or_else(|| self.dma_zone.as_mut()?.allocate_pages(count))
-            }
-            ZoneType::HighMem => {
-                self.highmem_zone.as_mut()?.allocate_pages(count)
-                    .or_else(|| self.normal_zone.as_mut()?.allocate_pages(count))
-                    .or_else(|| self.dma_zone.as_mut()?.allocate_pages(count))
-            }
-        }
-    }
-
-    fn free_pages(&mut self, frame: PhysFrame, count: usize) {
-        let addr = frame.start_address();
-        
-        if let Some(zone) = self.dma_zone.as_mut() {
-            if zone.contains(addr) {
-                zone.free_pages(frame, count);
-                return;
-            }
-        }
-        
-        if let Some(zone) = self.normal_zone.as_mut() {
-            if zone.contains(addr) {
-                zone.free_pages(frame, count);
-                return;
-            }
-        }
-        
-        if let Some(zone) = self.highmem_zone.as_mut() {
-            if zone.contains(addr) {
-                zone.free_pages(frame, count);
-            }
-        }
-    }
-
     pub fn add_zone(&mut self, zone_type: MemoryZoneType, start_addr: PhysAddr, size: usize) {
         serial_println!("[ZONE] Starting to add zone {:?}", zone_type);
         serial_println!("[ZONE] Parameters: start={:#x}, size={:#x}", start_addr.as_u64(), size);
@@ -618,7 +494,9 @@ pub enum MemoryError {
     InvalidPermissions,
     RegionOverlap,
     ZoneNotFound,
+    PageNotMapped,
     ZoneExhausted,
+    MapError,
     InvalidZoneAccess,
     InsufficientContiguousMemory,
     ZoneValidationFailed,
@@ -631,6 +509,7 @@ pub enum MemoryError {
     VramVerificationFailed,
     VramInvalidBlock,
     InvalidAlignment,
+    InvalidExecutable,
 }
 
 #[derive(Debug, Clone)]
@@ -697,18 +576,6 @@ impl AllocatedRegions {
         
         serial_println!("Region added successfully. Total regions: {}", self.count);
         Ok(())
-    }
-
-    fn is_region_free(&self, start: VirtAddr, size: u64) -> bool {
-        let start_addr = start.as_u64();
-        let end_addr = start_addr + size;
-        
-        for region in self.regions.iter().flatten() {
-            if !(end_addr <= region.start || start_addr >= region.end) {
-                return false;
-            }
-        }
-        true
     }
 }
 
@@ -805,6 +672,19 @@ impl MemoryManager {
     
         serial_println!("Memory manager initialization completed successfully");
         memory_manager
+    }
+
+    pub fn update_page_flags(&mut self, page: Page, flags: PageTableFlags) -> Result<(), MemoryError> {
+        let frame = self.page_table.translate_page(page)
+            .map_err(|_| MemoryError::PageNotMapped)?;
+    
+        unsafe {
+            self.page_table.update_flags(page, flags)
+                .map_err(|_| MemoryError::MapError)?
+                .flush();
+        }
+    
+        Ok(())
     }
 
     pub fn init_verification(&mut self) -> Result<(), MemoryError> {
@@ -1178,25 +1058,6 @@ impl MemoryManager {
         Ok(())
     }
 
-    fn set_cow_flag(&mut self, page: Page) -> Result<(), MemoryError> {
-        let flags = self.page_table.level_4_table()[page.p4_index()].flags();
-        let new_flags = (flags.bits() | COW_FLAG_MASK) as u64;
-        self.page_table.level_4_table()[page.p4_index()].set_flags(
-            PageTableFlags::from_bits_truncate(new_flags)
-        );
-        Ok(())
-    }
-
-    fn clear_cow_flag(&mut self, page: Page) -> Result<(), MemoryError> {
-        let flags = self.page_table.level_4_table()[page.p4_index()].flags();
-        
-        let new_flags = (flags.bits() & !COW_FLAG_MASK) as u64;
-        self.page_table.level_4_table()[page.p4_index()].set_flags(
-            PageTableFlags::from_bits_truncate(new_flags)
-        );
-        Ok(())
-    }
-
     pub fn handle_cow_fault(&mut self, addr: VirtAddr) -> Result<(), MemoryError> {
         let page = Page::containing_address(addr);
         
@@ -1334,16 +1195,6 @@ impl MemoryManager {
         Ok(frame)
     }
 
-    pub fn create_user_space(&mut self) -> Result<(), MemoryError> {
-        let page_table = &mut *self.page_table.level_4_table();
-
-        for i in 0..256 {
-            page_table[i].set_unused();
-        }
-        
-        Ok(())
-    }
-
     pub fn map_user_region(
         &mut self,
         region: UserSpaceRegion,
@@ -1371,10 +1222,6 @@ impl MemoryManager {
                 }
             }
             return Ok(());
-        }
-
-        if !self.is_valid_user_address(region.start) {
-            return Err(MemoryError::InvalidAddress);
         }
     
         if !self.is_valid_user_flags(region.flags) {
@@ -1416,28 +1263,54 @@ impl MemoryManager {
     }
 
     pub fn allocate_kernel_stack_range(&mut self, pages: usize) -> Result<VirtAddr, MemoryError> {
-        const KERNEL_STACK_START: u64 = 0xFFFF_FF00_0000_0000;
+        const KERNEL_STACK_START: u64 = 0xffff_ffff_8000_0000;
         static NEXT_STACK: AtomicU64 = AtomicU64::new(0);
-
-        let offset = NEXT_STACK.fetch_add(pages as u64 * 0x1000, Ordering::Relaxed);
-        let start_addr = VirtAddr::new(KERNEL_STACK_START + offset);
+    
+        let offset = NEXT_STACK.fetch_add(pages as u64 * 0x1000, Ordering::SeqCst);
+        if offset >= 0x1000_0000 {
+            return Err(MemoryError::MemoryLimitExceeded);
+        }
+    
+        let start_addr = VirtAddr::new(KERNEL_STACK_START.checked_add(offset)
+            .ok_or(MemoryError::InvalidAddress)?);
+        
+        serial_println!("Allocating kernel stack: start={:#x}, pages={}", 
+            start_addr.as_u64(), pages);
 
         for i in 0..pages {
-            let page = Page::<Size4KiB>::containing_address(start_addr + (i * 0x1000));
+            let page_addr = start_addr.as_u64().checked_add(i as u64 * 0x1000)
+                .ok_or(MemoryError::InvalidAddress)?;
+            let page = Page::<Size4KiB>::containing_address(VirtAddr::new(page_addr));
+            
             let frame = self.frame_allocator
                 .allocate_frame()
                 .ok_or(MemoryError::FrameAllocationFailed)?;
+                
+            let flags = PageTableFlags::PRESENT 
+                | PageTableFlags::WRITABLE
+                | PageTableFlags::GLOBAL
+                | PageTableFlags::NO_EXECUTE;
             
             unsafe {
-                self.page_table.map_to(
-                    page,
-                    frame,
-                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
-                    &mut self.frame_allocator
-                )?.flush();
+                self.page_table
+                    .map_to(
+                        page,
+                        frame,
+                        flags,
+                        &mut self.frame_allocator
+                    )?
+                    .flush();
+    
+                core::ptr::write_bytes(
+                    page.start_address().as_mut_ptr::<u8>(),
+                    0,
+                    0x1000
+                );
             }
+    
+            serial_println!("  Mapped page {}/{} at {:#x}", i + 1, pages, page_addr);
         }
-
+    
         Ok(start_addr)
     }
 
@@ -1556,38 +1429,12 @@ impl MemoryManager {
         self.zone_allocator.allocate_large_zone(zone_type, pages)
     }
 
-    fn is_valid_user_address(&self, addr: VirtAddr) -> bool {
-        let addr_val = addr.as_u64();
-        addr_val <= USER_SPACE_END
-    }
-
     fn is_valid_user_flags(&self, flags: PageTableFlags) -> bool {
         flags.contains(PageTableFlags::PRESENT) &&
         !flags.contains(PageTableFlags::WRITE_THROUGH) &&
         !flags.contains(PageTableFlags::NO_CACHE) &&
         (flags.contains(PageTableFlags::USER_ACCESSIBLE) || 
          flags.contains(PageTableFlags::WRITABLE))
-    }
-
-    pub fn validate_user_access(&self, addr: VirtAddr, size: usize) -> Result<(), MemoryError> {
-        let end_addr = addr.as_u64().checked_add(size as u64)
-            .ok_or(MemoryError::InvalidAddress)?;
-            
-        if !self.is_valid_user_address(addr) || end_addr > USER_SPACE_END {
-            return Err(MemoryError::InvalidAddress);
-        }
-
-        let start_page = Page::<Size4KiB>::containing_address(addr);
-        let end_page = Page::containing_address(VirtAddr::new(end_addr));
-        
-        for page in Page::range(start_page, end_page) {
-            match self.page_table.translate_page(page) {
-                Ok(_) => continue,
-                Err(_) => return Err(MemoryError::InvalidAddress),
-            }
-        }
-        
-        Ok(())
     }
 
     pub fn phys_to_virt(&self, phys: PhysAddr) -> VirtAddr {
@@ -2002,34 +1849,6 @@ impl BootInfoFrameAllocator {
         frame_addresses.map(|addr| PhysFrame::containing_address(PhysAddr::new(addr)))
     }
 
-    fn allocate_frame_from_zone(&mut self, zone_type: MemoryZoneType) -> Option<PhysFrame> {
-        serial_println!("Attempting to allocate frame from {:?} zone", zone_type);
-        
-        
-        let current_pos = self.next;
-        let frame = self.usable_frames()
-            .skip(current_pos)
-            .find(|frame| {
-                let addr = frame.start_address().as_u64();
-                match zone_type {
-                    MemoryZoneType::DMA => addr < 0x1000000,
-                    MemoryZoneType::Normal => addr >= 0x1000000 && addr < 0x40000000,
-                    MemoryZoneType::HighMem => addr >= 0x40000000,
-                    _ => true,
-                }
-            });
-            
-        if let Some(frame) = frame {
-            self.next = current_pos + 1;
-            serial_println!("Allocated frame at {:?} for {:?} zone", 
-                frame.start_address(), zone_type);
-            Some(frame)
-        } else {
-            serial_println!("Failed to allocate frame for {:?} zone", zone_type);
-            None
-        }
-    }
-
     fn allocate_next_frame(&mut self) -> Option<PhysFrame> {
         loop {
             let current_addr = self.current_region_start + (self.next * 4096) as u64;
@@ -2131,17 +1950,4 @@ unsafe fn active_level_4_table(physical_memory_offset: VirtAddr)
 pub struct MemoryStats {
     pub used_frames: usize,
     pub total_allocations: usize,
-}
-
-pub fn print_memory_info(memory_manager: &MemoryManager) {
-    let (level_4_page_table, _) = Cr3::read();
-    println!("Level 4 page table at: {:?}", level_4_page_table.start_address());
-    
-    let stats = MemoryStats {
-        used_frames: memory_manager.frame_allocator.next,
-        total_allocations: memory_manager.allocated_regions.count,
-    };
-    println!("Memory Statistics:");
-    println!("  Used physical frames: {}", stats.used_frames);
-    println!("  Total allocations: {}", stats.total_allocations);
 }

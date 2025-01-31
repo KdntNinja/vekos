@@ -17,8 +17,6 @@
 #[cfg(target_arch = "x86_64")]
 use core::sync::atomic::{AtomicU64, Ordering};
 use x86_64::VirtAddr;
-use x86_64::structures::paging::PageTableFlags;
-use spin::Mutex;
 use crate::verification::{Hash, OperationProof, Verifiable, VerificationError};
 use crate::memory::MemoryError;
 use crate::hash;
@@ -27,15 +25,10 @@ use crate::verification::MemoryOpType;
 use alloc::vec::Vec;
 use crate::verification::Operation;
 use alloc::vec;
-use core::f32::consts::PI;
 use crate::verification::MemoryProof;
 use crate::graphics_hal::BlitRequest;
 use alloc::collections::BTreeMap;
 use crate::verification::ProofData;
-
-const BLIT_CHUNK_SIZE: usize = 64;
-const TILE_CACHE_SIZE: usize = 256;
-const CACHE_LINE_SIZE: usize = 64;
 
 #[repr(C, packed)]
 pub struct VbeInfoBlock {
@@ -113,64 +106,6 @@ struct TileCache {
     vram_offset: u64,
     cache_size: usize,
     state_hash: AtomicU64,
-}
-
-impl TileCache {
-    fn new(vram_offset: u64, size: usize) -> Self {
-        Self {
-            cached_tiles: BTreeMap::new(),
-            vram_offset,
-            cache_size: size,
-            state_hash: AtomicU64::new(0),
-        }
-    }
-
-    fn prefetch_tile(&mut self, tile_id: u32, data: &[u8]) -> Result<VirtAddr, VerificationError> {
-        if self.cached_tiles.len() >= self.cache_size {
-            if let Some((&old_id, _)) = self.cached_tiles
-                .iter()
-                .min_by_key(|(_, ct)| ct.last_access) 
-            {
-                self.cached_tiles.remove(&old_id);
-            }
-        }
-
-        let cache_addr = VirtAddr::new(self.vram_offset + 
-            (tile_id as u64 * CACHE_LINE_SIZE as u64));
-
-        unsafe {
-            let src_ptr = data.as_ptr();
-            let dst_ptr = cache_addr.as_mut_ptr::<u8>();
-            
-            for i in (0..data.len()).step_by(CACHE_LINE_SIZE) {
-                let chunk_size = core::cmp::min(CACHE_LINE_SIZE, data.len() - i);
-                core::ptr::copy_nonoverlapping(
-                    src_ptr.add(i),
-                    dst_ptr.add(i),
-                    chunk_size
-                );
-                
-                if i + CACHE_LINE_SIZE < data.len() {
-                    core::arch::x86_64::_mm_prefetch(
-                        src_ptr.add(i + CACHE_LINE_SIZE) as *const i8,
-                        core::arch::x86_64::_MM_HINT_T0
-                    );
-                }
-            }
-        }
-
-        let tile_hash = hash::hash_memory(cache_addr, data.len());
-        
-        self.cached_tiles.insert(tile_id, CachedTile {
-            vram_address: cache_addr,
-            last_access: crate::tsc::read_tsc(),
-            access_count: 1,
-            hash: tile_hash,
-            dirty: false,
-        });
-
-        Ok(cache_addr)
-    }
 }
 
 #[derive(Debug)]
@@ -306,59 +241,6 @@ impl TileSet {
         }
     }
 
-    pub fn set_tile_attributes(&mut self, tile_id: u32, attributes: TileAttributes) -> Result<(), VerificationError> {
-        if let Some(tile) = self.tiles.iter_mut().find(|t| t.id == tile_id) {
-            tile.attributes = attributes;
-
-            let mut hasher = [0u64; 4];
-            hasher[0] = tile_id as u64;
-            hasher[1] = attributes.priority as u64;
-            hasher[2] = ((attributes.flip_x as u64) << 1) | (attributes.flip_y as u64);
-            hasher[3] = attributes.palette_bank as u64;
-            
-            let attr_hash = hash::hash_memory(
-                VirtAddr::new(hasher.as_ptr() as u64),
-                core::mem::size_of_val(&hasher)
-            );
-            self.set_hash.store(attr_hash.0, Ordering::SeqCst);
-            
-            Ok(())
-        } else {
-            Err(VerificationError::InvalidOperation)
-        }
-    }
-
-    pub fn get_tile_attributes(&self, tile_id: u32) -> Option<TileAttributes> {
-        self.tiles.iter()
-            .find(|t| t.id == tile_id)
-            .map(|t| t.attributes)
-    }
-
-    pub fn add_tile(&mut self, data: &[u8], id: u32) -> Result<(), VerificationError> {
-        if data.len() != (self.tile_width * self.tile_height) as usize {
-            return Err(VerificationError::InvalidOperation);
-        }
-    
-        let mut tile_data = [0u8; 256];
-        tile_data[..data.len()].copy_from_slice(data);
-    
-        self.tiles.push(Tile {
-            data: tile_data,
-            width: self.tile_width,
-            height: self.tile_height,
-            id,
-            attributes: TileAttributes::new(),
-        });
-
-        let tile_hash = hash::hash_memory(
-            VirtAddr::new(data.as_ptr() as u64),
-            data.len()
-        );
-        self.set_hash.store(tile_hash.0, Ordering::SeqCst);
-        
-        Ok(())
-    }
-
     pub fn get_tile(&self, id: u32) -> Option<&Tile> {
         self.tiles.iter().find(|t| t.id == id)
     }
@@ -438,9 +320,7 @@ impl VbeDriver {
         width: u32,
         height: u32,
         attributes: TileAttributes,
-    ) -> Result<(), VerificationError> {
-        use core::arch::x86_64::{__m128i, _mm_load_si128, _mm_storeu_si128};
-    
+    ) -> Result<(), VerificationError> {    
         let src_base = source_addr.as_ptr::<u8>();
         let dst_base = (self.framebuffer + (y * self.pitch + x) as u64).as_mut_ptr::<u8>();
     
@@ -701,73 +581,7 @@ impl VbeDriver {
 
         Ok(hash::combine_hashes(&hashes))
     }
-
-    fn set_mode(mode: u16) -> Result<VbeModeInfo, MemoryError> {
-        let mut mode_info = VbeModeInfo {
-            attributes: 0,
-            window_a: 0,
-            window_b: 0,
-            granularity: 0,
-            window_size: 0,
-            segment_a: 0,
-            segment_b: 0,
-            win_func_ptr: 0,
-            pitch: 0,
-            width: 0,
-            height: 0,
-            w_char: 0,
-            y_char: 0,
-            planes: 0,
-            bpp: 0,
-            banks: 0,
-            memory_model: 0,
-            bank_size: 0,
-            image_pages: 0,
-            reserved0: 0,
-            red_mask: 0,
-            red_position: 0,
-            green_mask: 0,
-            green_position: 0,
-            blue_mask: 0,
-            blue_position: 0,
-            reserved_mask: 0,
-            reserved_position: 0,
-            direct_color_attributes: 0,
-            framebuffer: 0,
-            off_screen_mem_off: 0,
-            off_screen_mem_size: 0,
-            reserved1: [0; 206],
-        };
-
-        unsafe {
-            let _ = x86_64::instructions::interrupts::without_interrupts(|| {
-                let mode_info_ptr = &mut mode_info as *mut VbeModeInfo;
-                core::arch::asm!(
-                    "push es",
-                    "push di",
-                    "mov ax, 0x4F01",
-                    "int 0x10",
-                    "pop di",
-                    "pop es",
-                    in("cx") mode,
-                    in("di") mode_info_ptr,
-                );
-            });
-
-            x86_64::instructions::interrupts::without_interrupts(|| {
-                let mode_with_lfb = mode | 0x4000;
-                core::arch::asm!(
-                    "mov ax, 0x4F02",
-                    "int 0x10",
-                    in("ax") mode_with_lfb,
-                    options(nomem, preserves_flags)
-                );
-            });
-        }
-
-        Ok(mode_info)
-    }
-
+    
     pub fn set_palette_color(&mut self, index: u8, r: u8, g: u8, b: u8) -> Result<(), VerificationError> {
         self.palette[index as usize] = [r, g, b];
         

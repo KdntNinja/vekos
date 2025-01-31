@@ -16,7 +16,6 @@
 
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
-use spin::Mutex;
 use x86_64::VirtAddr;
 use core::alloc::Layout;
 use crate::verification::Operation;
@@ -25,7 +24,6 @@ use crate::verification::ProofData;
 use crate::verification::MemoryProof;
 use crate::verification::MemoryOpType;
 use crate::VBE_DRIVER;
-use alloc::vec;
 use crate::{
     verification::{Hash, OperationProof, Verifiable, VerificationError},
     hash,
@@ -82,7 +80,7 @@ pub struct LayerManager {
 }
 
 impl LayerManager {
-    pub fn new(framebuffer: VirtAddr, width: u32, height: u32) -> Self {
+    pub fn new(width: u32, height: u32) -> Self {
         let composite_buffer = unsafe {
             let layout = Layout::from_size_align(
                 (width * height * 4) as usize,
@@ -355,7 +353,7 @@ impl GraphicsHAL {
             config,
             double_buffer: None,
             state_hash: AtomicU64::new(0),
-            layer_manager: LayerManager::new(framebuffer, config.width, config.height),
+            layer_manager: LayerManager::new(config.width, config.height),
         }
     }
 
@@ -473,7 +471,6 @@ impl GraphicsHAL {
             },
             BlitOperation::Blend(alpha) => {
                 if let Some(ref mut buffer) = self.double_buffer {
-                    let inv_alpha = 255 - alpha;
                     for y in 0..request.src_region.height {
                         for x in 0..request.src_region.width {
                             let src_pos = (src_offset + y * self.config.pitch + 
@@ -602,7 +599,6 @@ impl GraphicsHAL {
                 
                 for i in 0..pixel_count {
                     let composite_pixel = *composite_ptr.add(i);
-                    let fb_pixel = *fb_ptr.add(i);
                     
                     if (composite_pixel >> 24) != 0 {
                         *fb_ptr.add(i) = composite_pixel;

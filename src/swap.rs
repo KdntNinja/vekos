@@ -37,11 +37,10 @@ use x86_64::{
 };
 use crate::{
     memory::{MemoryError, MemoryManager},
-    fs::{FILESYSTEM, FileSystem, FilePermissions},
+    fs::{FILESYSTEM, FileSystem},
     hash,
 };
 
-const SWAP_FILE: &str = "swap";
 const PAGE_SIZE: usize = 4096;
 const MAX_SWAP_PAGES: usize = 1024;
 
@@ -60,8 +59,6 @@ pub struct SwapEntry {
 pub struct SwapManager {
     free_slots: Vec<usize>,
     pub used_slots: Vec<Option<SwapEntry>>,
-    total_slots: usize,
-    swap_file_size: usize,
 }
 
 pub struct DiskIOManager {
@@ -79,34 +76,7 @@ impl SwapManager {
         Self {
             free_slots,
             used_slots: vec![None; MAX_SWAP_PAGES],
-            total_slots: MAX_SWAP_PAGES,
-            swap_file_size: PAGE_SIZE * MAX_SWAP_PAGES,
         }
-    }
-
-    pub fn init(&self) -> Result<(), MemoryError> {
-        let mut fs = FILESYSTEM.lock();
-
-        if fs.stat(SWAP_FILE).is_err() {
-            fs.create_file(
-                SWAP_FILE,
-                FilePermissions {
-                    read: true,
-                    write: true,
-                    execute: false,
-                }
-            ).map_err(|_| MemoryError::SwapFileError)?;
-
-            let zeros = vec![0u8; self.swap_file_size];
-            fs.write_file(SWAP_FILE, &zeros)
-                .map_err(|_| MemoryError::SwapFileError)?;
-        }
-        
-        Ok(())
-    }
-
-    pub fn get_entry(&self, slot: usize) -> Option<&SwapEntry> {
-        self.used_slots.get(slot)?.as_ref()
     }
 
     pub fn iter_slots(&self) -> impl Iterator<Item = (usize, &Option<SwapEntry>)> {
@@ -146,11 +116,6 @@ impl SwapManager {
 
         let disk_io = DISK_IO.lock();
         disk_io.write_page(slot as u64, page_data)?;
-
-        let page_hash = hash_memory(
-            VirtAddr::new(page_data.as_ptr() as u64),
-            PAGE_SIZE
-        );
 
         let mut hash_bytes = [0u8; 32];
         hash_bytes[0..8].copy_from_slice(&page_hash.0.to_ne_bytes());

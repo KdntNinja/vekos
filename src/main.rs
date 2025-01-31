@@ -52,8 +52,10 @@ mod allocator;
 pub mod crypto;
 mod vkfs;
 mod vbe;
+pub mod syscall;
 mod boot_splash;
 pub mod hash_chain;
+pub mod elf;
 pub mod merkle_tree;
 pub mod operation_proofs;
 pub mod proof_storage;
@@ -66,7 +68,6 @@ pub mod framebuffer;
 pub mod block_cache;
 mod swap;
 mod boot_verification;
-mod elf; 
 mod tsc;
 mod buddy_allocator;
 mod fs;
@@ -76,7 +77,6 @@ mod interrupts;
 mod memory;
 mod process;
 mod scheduler;
-mod syscall;
 mod time;
 mod priority;
 
@@ -119,16 +119,12 @@ pub const PALETTE_COLORS: [u32; 16] = [
 
 pub struct DrawingState {
     current_color: u32,
-    last_x: Option<u32>,
-    last_y: Option<u32>,
 }
 
 impl DrawingState {
     pub fn new() -> Self {
         Self {
             current_color: PALETTE_COLORS[0],
-            last_x: None,
-            last_y: None,
         }
     }
 }

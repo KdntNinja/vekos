@@ -16,21 +16,21 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use crate::MEMORY_MANAGER;
+use crate::scheduler::SCHEDULER;
 use crate::shell::ShellError;
+use crate::Process;
 use crate::shell::ExitCode;
 use super::ShellResult;
 use crate::serial_println;
-use crate::fs::FILESYSTEM;
-use crate::MEMORY_MANAGER;
 use crate::println;
-use crate::process::ProcessState;
+use crate::fs::FileSystem;
+use crate::alloc::string::ToString;
 use crate::shell::ShellDisplay;
 use crate::fs::validate_path;
-use crate::VirtAddr;
-use crate::Process;
 use crate::shell::format;
 use super::commands::ls::{list_directory, parse_ls_flags};
-use crate::fs::FileSystem;
+use crate::fs::FILESYSTEM;
 use crate::fs::normalize_path;
 use crate::print;
 use crate::fs::FsError;
@@ -60,68 +60,79 @@ impl CommandExecutor {
         self.builtins.push((name, handler));
     }
 
-    pub fn execute(&self, command: &str, args: &[String]) -> ShellResult {
-        if command.is_empty() {
-            return Ok(ExitCode::Success);
+    fn execute_program(&self, path: &str, args: &[String]) -> ShellResult {
+        let mut fs = FILESYSTEM.lock();
+        serial_println!("Attempting to read program file: {}", path);
+        match fs.read_file(path) {
+            Ok(data) => {
+                serial_println!("Successfully read program file, size: {} bytes", data.len());
+                let process_id;
+                {
+                    let mut mm_lock = MEMORY_MANAGER.lock();
+                    if let Some(mm) = mm_lock.as_mut() {
+                        serial_println!("Got memory manager lock");
+                        match Process::new(mm) {
+                            Ok(mut process) => {
+                                serial_println!("Created new process with ID: {}", process.id().0);
+                                if let Err(e) = process.load_program(&data, mm) {
+                                    serial_println!("Failed to load program: {:?}", e);
+                                    return Err(ShellError::ExecutionFailed);
+                                }
+                                serial_println!("Successfully loaded program");
+                                
+                                process_id = process.id();
+
+                                let mut scheduler = SCHEDULER.lock();
+                                scheduler.add_process(process);
+                            },
+                            Err(_) => return Err(ShellError::ExecutionFailed),
+                        }
+                    } else {
+                        return Err(ShellError::ExecutionFailed)
+                    }
+                }
+
+                if let Some(mut current) = PROCESS_LIST.lock().get_mut_by_id(process_id) {
+                    current.switch_to_user_mode();
+                }
+                
+                Ok(ExitCode::Success)
+            },
+            Err(_) => Err(ShellError::ExecutionFailed)
         }
-    
-        
+    }
+
+    pub fn execute(&self, command: &str, args: &[String]) -> ShellResult {
+        serial_println!("Shell: Starting command execution for '{}'", command);
+
         for &(name, handler) in &self.builtins {
             if command == name {
-                serial_println!("Executing builtin command: {}", name);
-                let result = handler(args);
-                serial_println!("Command execution result: {:?}", result);
-                return result;
+                return handler(args);
             }
         }
-    
-        
-        serial_println!("Command not found: {}", command);
-        Err(ShellError::CommandNotFound)
-    }
 
-    fn execute_external(&self, command: &str, args: &[String]) -> ShellResult {
-        let mut fs = FILESYSTEM.lock();
-        let command_paths = [
-            format!("/bin/{}", command),
-            format!("/usr/bin/{}", command),
+        let program_path = if command.starts_with('/') {
+            command.to_string()
+        } else {
             format!("/programs/{}", command)
-        ];
-        
-        for command_path in command_paths.iter() {
-            match fs.stat(command_path) {
-                Ok(stats) => {
-                    if !stats.permissions.execute {
-                        return Err(ShellError::PermissionDenied);
-                    }
-    
-                    let data = fs.read_file(command_path)
-                        .map_err(|_| ShellError::ExecutionFailed)?;
-                    
+        };
+
+        {
+            let mut fs = FILESYSTEM.lock();
+            match fs.stat(&program_path) {
+                Ok(_) => {
+                    serial_println!("Found program file");
                     drop(fs);
-    
-                    let mut process_list = PROCESS_LIST.lock();
-                    if let Some(current) = process_list.current() {
-                        let mut mm_lock = MEMORY_MANAGER.lock();
-                        if let Some(mm) = mm_lock.as_mut() {
-                            if let Ok(mut process) = Process::new(mm) {
-                                process.set_instruction_pointer(data.as_ptr() as u64);
-                                process.set_state(ProcessState::Ready);
-                                process_list.add(process)
-                                    .map_err(|_| ShellError::ExecutionFailed)?;
-                                return Ok(ExitCode::Success);
-                            }
-                        }
-                    }
-                    return Err(ShellError::ExecutionFailed);
+                    self.execute_program(&program_path, args)
                 },
-                Err(_) => continue,
+                Err(_) => {
+                    serial_println!("Program not found");
+                    Err(ShellError::CommandNotFound)
+                }
             }
         }
-        
-        Err(ShellError::CommandNotFound)
     }
-
+    
     fn cmd_exit(args: &[String]) -> ShellResult {
         let code = args.get(0)
             .and_then(|s| s.parse::<i32>().ok())

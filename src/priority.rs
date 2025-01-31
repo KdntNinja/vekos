@@ -18,7 +18,6 @@ use core::cmp::Ordering;
 use alloc::collections::BinaryHeap;
 use alloc::vec::Vec;
 use crate::process::ProcessId;
-use crate::serial_println;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ProcessPriority {
@@ -97,14 +96,6 @@ impl PriorityScheduler {
             .cloned()
         {
             self.ready_queue.push(priority);
-        }
-    }
-
-    pub fn debug_queue_state(&self) {
-        serial_println!("Priority Queue State:");
-        for process in &self.process_priorities {
-            serial_println!("  PID: {}, Priority: {}, Time Slice: {}",
-                process.pid.as_u64(), process.priority, process.time_slice);
         }
     }
 

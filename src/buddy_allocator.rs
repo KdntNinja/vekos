@@ -19,15 +19,12 @@ use core::alloc::{GlobalAlloc, Layout};
 use core::marker::PhantomData;
 use core::ptr::NonNull;
 use crate::process::PROCESS_LIST;
-use crate::memory::MemoryZoneType;
 use crate::memory::SWAPPED_PAGES;
 use spin::Mutex;
 use x86_64::VirtAddr;
 
 const MIN_BLOCK_SIZE: usize = 4096; 
 const MAX_ORDER: usize = 11; 
-const MAX_ORDER_BITS: usize = 30; 
-const LARGE_ALLOCATION_THRESHOLD: usize = 1024 * 1024;
 const MAX_ALLOCATION_SIZE: usize = 1024 * 1024 * 1024; 
 const MAX_BLOCK_SIZE: usize = 8 * 1024 * 1024;
 
@@ -35,7 +32,6 @@ pub struct BuddyAllocator {
     free_lists: [Option<NonNull<FreeBlock>>; MAX_ORDER + 1],
     start_addr: VirtAddr,
     size: usize,
-    current_zone: MemoryZoneType,
     pub initialized: bool,
     free_pages: usize,  
 }
@@ -56,7 +52,6 @@ impl BuddyAllocator {
             free_lists: [None; MAX_ORDER + 1],
             start_addr: VirtAddr::zero(),
             size: 0,
-            current_zone: MemoryZoneType::Normal,
             initialized: false,
             free_pages: 0,  
         }
@@ -85,13 +80,6 @@ impl BuddyAllocator {
         } else {
             Err("Allocator already initialized")
         }
-    }
-
-    fn calculate_max_size(&self) -> usize {
-        
-        const DEFAULT_MAX_SIZE: usize = 16 * 1024 * 1024; 
-        serial_println!("  Maximum allocatable size: {:#x}", DEFAULT_MAX_SIZE);
-        DEFAULT_MAX_SIZE
     }
 
     fn calculate_order(&self, size: usize) -> Result<usize, &'static str> {
@@ -266,28 +254,7 @@ impl BuddyAllocator {
         serial_println!("BuddyAllocator: Failed to allocate {} bytes", size);
         None
     }
-
-    fn validate_allocation_request(&self, size: usize) -> Result<(), &'static str> {
-        if size == 0 {
-            return Err("Zero size allocation not allowed");
-        }
-        if size > MAX_ALLOCATION_SIZE {
-            return Err("Allocation size exceeds maximum allowed");
-        }
-        if self.free_pages * MIN_BLOCK_SIZE < size {
-            return Err("Not enough memory available");
-        }
-        Ok(())
-    }
-
-    pub fn check_allocation_state(&self) -> bool {
-        let total_free = self.free_lists.iter()
-            .filter(|block| block.is_some())
-            .count();
-            
-        self.free_pages > 0 && total_free > 0
-    }
-
+    
     pub unsafe fn deallocate(&mut self, ptr: NonNull<u8>, layout: Layout) {
         let size = layout.size().max(layout.align()).max(MIN_BLOCK_SIZE);
 

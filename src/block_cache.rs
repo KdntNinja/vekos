@@ -29,15 +29,10 @@ use crate::verification::FSProof;
 use crate::fs::FILESYSTEM;
 use alloc::vec::Vec;
 
-const MAX_CACHE_ENTRIES: usize = 1024;
-
 #[derive(Debug)]
 pub struct CacheEntry {
-    block_num: u64,
     data: [u8; 4096],
     dirty: bool,
-    access_count: u64,
-    last_access: u64,
     hash: Hash,
 }
 
@@ -47,7 +42,6 @@ pub struct BlockCache {
     state_hash: AtomicU64,
     hit_count: AtomicU64,
     miss_count: AtomicU64,
-    access_counter: AtomicU64,
 }
 
 impl BlockCache {
@@ -57,7 +51,6 @@ impl BlockCache {
             state_hash: AtomicU64::new(0),
             hit_count: AtomicU64::new(0),
             miss_count: AtomicU64::new(0),
-            access_counter: AtomicU64::new(0),
         }
     }
 
@@ -148,15 +141,6 @@ impl BlockCache {
         });
 
         dirty_blocks
-    }
-
-    fn evict_one(&mut self) {
-        if let Some((&block_num, _)) = self.entries
-            .iter()
-            .min_by_key(|(_, entry)| (entry.access_count, entry.last_access))
-        {
-            self.entries.remove(&block_num);
-        }
     }
 
     pub fn get_stats(&self) -> (u64, u64) {

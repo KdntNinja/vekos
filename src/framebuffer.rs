@@ -57,7 +57,6 @@ pub struct Framebuffer {
     front_buffer_hash: AtomicU64,
     back_buffer_hash: AtomicU64,
     vsync_enabled: AtomicBool,
-    vga_status_port: Mutex<Port<u8>>,
     vga_crt_port: Mutex<Port<u16>>,
     page1_buffer: VirtAddr,
     page2_buffer: VirtAddr,
@@ -100,7 +99,6 @@ impl Framebuffer {
                     front_buffer_hash: AtomicU64::new(0),
                     back_buffer_hash: AtomicU64::new(0),
                     vsync_enabled: AtomicBool::new(true),
-                    vga_status_port: Mutex::new(Port::new(0x3DA)),
                     vga_crt_port: Mutex::new(Port::new(0x3D4)),
                     page1_buffer: buffer,
                     page2_buffer: buffer,
@@ -165,7 +163,6 @@ impl Framebuffer {
                         front_buffer_hash: AtomicU64::new(0),
                         back_buffer_hash: AtomicU64::new(0),
                         vsync_enabled: AtomicBool::new(true),
-                        vga_status_port: Mutex::new(Port::new(0x3DA)),
                         vga_crt_port: Mutex::new(Port::new(0x3D4)),
                         page1_buffer: buffer,
                         page2_buffer: buffer2_addr,
@@ -187,7 +184,6 @@ impl Framebuffer {
                         front_buffer_hash: AtomicU64::new(0),
                         back_buffer_hash: AtomicU64::new(0),
                         vsync_enabled: AtomicBool::new(true),
-                        vga_status_port: Mutex::new(Port::new(0x3DA)),
                         vga_crt_port: Mutex::new(Port::new(0x3D4)),
                         page1_buffer: buffer,
                         page2_buffer: buffer,
@@ -209,7 +205,6 @@ impl Framebuffer {
                 front_buffer_hash: AtomicU64::new(0),
                 back_buffer_hash: AtomicU64::new(0),
                 vsync_enabled: AtomicBool::new(true),
-                vga_status_port: Mutex::new(Port::new(0x3DA)),
                 vga_crt_port: Mutex::new(Port::new(0x3D4)),
                 page1_buffer: buffer,
                 page2_buffer: buffer,
@@ -420,32 +415,6 @@ impl Framebuffer {
         self.swap_in_progress.load(Ordering::SeqCst)
     }
 
-    fn generate_flush_proof(&self, new_buffer: &[u8]) -> Result<OperationProof, VerificationError> {
-        let prev_state = self.state_hash();
-
-        let buffer_hash = hash::hash_memory(
-            VirtAddr::new(new_buffer.as_ptr() as u64),
-            new_buffer.len()
-        );
-
-        let new_state = Hash(prev_state.0 ^ buffer_hash.0);
-        
-        Ok(OperationProof {
-            op_id: crate::tsc::read_tsc(),
-            prev_state,
-            new_state,
-            data: crate::verification::ProofData::Memory(
-                crate::verification::MemoryProof {
-                    operation: crate::verification::MemoryOpType::Modify,
-                    address: self.buffer,
-                    size: self.size,
-                    frame_hash: buffer_hash,
-                }
-            ),
-            signature: [0; 64],
-        })
-    }
-    
     pub fn draw_pixel_verified(&mut self, x: u32, y: u32, color: u32) -> Result<Hash, VerificationError> {
         if let Err(e) = self.write_pixel(x, y, color) {
             return Err(VerificationError::OperationFailed);

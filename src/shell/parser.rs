@@ -61,10 +61,6 @@ impl<'a> Parser<'a> {
         self.current = self.input.next();
     }
 
-    fn peek(&self) -> Option<char> {
-        self.input.clone().next()
-    }
-
     fn skip_whitespace(&mut self) {
         while let Some(c) = self.current {
             if !c.is_whitespace() {

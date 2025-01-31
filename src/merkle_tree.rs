@@ -108,11 +108,6 @@ impl ConsistencyChecker {
     }
 
     fn verify_proof(&self, proof: &MerkleProof, dir: &Directory) -> Result<bool, VerificationError> {
-        let computed_hash = hash::hash_memory(
-            VirtAddr::new(dir as *const _ as u64),
-            core::mem::size_of::<Directory>()
-        );
-
         let mut current_hash = proof.leaf_hash;
         let mut index = proof.index;
 

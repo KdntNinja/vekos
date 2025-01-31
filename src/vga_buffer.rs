@@ -18,7 +18,6 @@ use volatile::Volatile;
 use core::fmt;
 use spin::Mutex;
 use lazy_static::lazy_static;
-use crate::serial_println;
 
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,23 +99,6 @@ impl Writer {
                 self.column_position += 1;
             }
         }
-    }
-
-    pub fn write_string(&mut self, s: &str) {
-        serial_println!("VGA: Writing string: {:?}", s);
-        for byte in s.bytes() {
-            match byte {
-                0x20..=0x7e | b'\n' => {
-                    self.write_byte(byte);
-                    serial_println!("VGA: Wrote byte: {}", byte as char);
-                },
-                _ => {
-                    self.write_byte(0xfe);
-                    serial_println!("VGA: Wrote replacement character");
-                }
-            }
-        }
-        serial_println!("VGA: Finished writing string");
     }
 
     pub fn set_cursor_position(&mut self, x: usize, y: usize) {

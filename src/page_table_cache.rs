@@ -31,7 +31,6 @@ use core::sync::atomic::{AtomicU64, Ordering};
 enum CacheEntryStatus {
     Clean,
     Dirty,
-    InUse,
 }
 
 #[derive(Debug)]
@@ -149,7 +148,7 @@ impl PageTableCache {
             .iter()
             .min_by_key(|(_, entry)| entry.last_access)
         {
-            let mut swapped_pages = SWAPPED_PAGES.lock();
+            let swapped_pages = SWAPPED_PAGES.lock();
             if swapped_pages.contains_key(&VirtAddr::new(addr.as_u64())) {
                 return;
             }

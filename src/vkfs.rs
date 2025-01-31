@@ -27,13 +27,11 @@ use crate::proof_storage::PROOF_STORAGE;
 use crate::hash;
 use core::sync::atomic::AtomicBool;
 use alloc::sync::Arc;
-use crate::verification::VerificationRegistry;
 use crate::verification::AtomicTransition;
 use crate::format;
 use crate::crypto::CRYPTO_VERIFIER;
 use crate::fs::FSOperation;
 use crate::buffer_manager::BufferManager;
-use crate::fs::FsError;
 use crate::tsc;
 use alloc::string::String;
 use crate::inode_cache::InodeCache;
@@ -80,7 +78,6 @@ pub struct Superblock {
 #[derive(Debug)]
 pub struct TransactionManager {
     current_transaction: Option<AtomicTransition>,
-    pending_operations: Vec<FSOperation>,
     transaction_counter: AtomicU64,
 }
 
@@ -88,7 +85,6 @@ impl TransactionManager {
     pub fn new() -> Self {
         Self {
             current_transaction: None,
-            pending_operations: Vec::new(),
             transaction_counter: AtomicU64::new(0),
         }
     }
@@ -196,30 +192,6 @@ impl BlockManager {
             block_size,
             free_blocks: AtomicU64::new(total_blocks),
         }
-    }
-    
-    pub fn allocate_blocks(&mut self, count: u64) -> Option<u64> {
-        let current = self.free_blocks.load(Ordering::SeqCst);
-        if current >= count {
-            if let Ok(_) = self.free_blocks.compare_exchange(
-                current,
-                current - count,
-                Ordering::SeqCst,
-                Ordering::SeqCst
-            ) 
-            {
-                Some(self.total_blocks - current)
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
-    pub fn deallocate_blocks(&mut self, _start: u64, count: u64) {
-        let _current = self.free_blocks.load(Ordering::SeqCst);
-        self.free_blocks.fetch_add(count, Ordering::SeqCst);
     }
 }
 
@@ -345,10 +317,6 @@ impl Directory {
         None  
     }
 
-    fn update_merkle_tree(&mut self, superblock: &mut Superblock) -> Result<(), VerificationError> {
-        superblock.update_merkle_tree()
-    }
-
     pub fn lookup(&self, name: &str) -> Option<u32> {
         self.entries.iter()
             .find(|entry| entry.get_name() == name)
@@ -403,28 +371,6 @@ impl Directory {
 
     pub fn verify_entries(&self) -> bool {
         self.entries.iter().all(|entry| entry.verify())
-    }
-
-    fn recursive_verify(&self, inode_table: &InodeTable) -> bool {
-        
-        if !self.verify_entries() {
-            return false;
-        }
-
-        
-        for entry in &self.entries {
-            if entry.entry_type == 2 { 
-                if let Some(inode) = inode_table.get(entry.inode_number) {
-                    if let Some(ref dir) = inode.directory {
-                        if !dir.recursive_verify(inode_table) {
-                            return false;
-                        }
-                    }
-                }
-            }
-        }
-
-        true
     }
 
     pub fn add_entry(&mut self, entry: DirEntry) -> Result<(), &'static str> {
@@ -597,32 +543,6 @@ impl Superblock {
         self.write_recovery_checkpoint()
     }
 
-    fn rebuild_from_last_verified_state(&mut self) -> Result<(), VerificationError> {
-        
-        let proofs = VERIFICATION_REGISTRY.lock();
-        let last_valid = proofs.get_proofs().last()
-            .ok_or(VerificationError::InvalidState)?;
-
-        
-        self.state_hash.store(last_valid.new_state.0, Ordering::SeqCst);
-
-        
-        let mut new_proofs = Vec::new();
-        for proof in proofs.get_proofs() {
-            if proof.op_id <= last_valid.op_id {
-                new_proofs.push(proof.clone());
-            }
-        }
-
-        
-        *VERIFICATION_REGISTRY.lock() = VerificationRegistry::new();
-        for proof in new_proofs {
-            VERIFICATION_REGISTRY.lock().register_proof(proof);
-        }
-
-        Ok(())
-    }
-
     fn rebuild_transition_chain(&mut self) -> Result<(), VerificationError> {
         
         let mut new_transitions = StateTransitionRegistry::new();
@@ -788,10 +708,6 @@ impl Superblock {
         let prev_state = self.state_hash();
         let mut transaction_mgr = self.transaction_manager.lock();
         
-        
-        let transaction_id = transaction_mgr.begin_transaction(prev_state)?;
-        
-        
         let fs_op = match operation {
             FSOpType::Create => FSOperation::Create { 
                 path: String::new() 
@@ -876,24 +792,6 @@ impl Superblock {
 
     pub fn get_inode_table(&self) -> &[Option<Inode>] {
         &[] 
-    }
-
-    pub fn update_merkle_tree(&mut self) -> Result<(), VerificationError> {
-        if let Some(root_inode) = self.get_root_inode() {
-            if let Some(ref root_dir) = root_inode.directory {
-                let mut tree = DirectoryMerkleTree::new(root_dir);
-                tree.build_tree(root_dir, self.get_inode_table())?;
-                
-                
-                let mut hash_bytes = [0u8; 32];
-                let root_hash_bytes = tree.root_hash().0.to_ne_bytes();
-                hash_bytes[0..8].copy_from_slice(&root_hash_bytes);
-                
-                self.root_merkle_hash = hash_bytes;
-                self.merkle_tree = Some(tree);
-            }
-        }
-        Ok(())
     }
 
     pub fn update_merkle_tree_for_path(&self, path: &str) -> Result<Hash, VerificationError> {
@@ -1415,28 +1313,6 @@ impl Inode {
         }
         true
     }
-
-    pub fn create_directory(&mut self) -> Result<(), &'static str> {
-        if self.directory.is_some() {
-            return Err("Already a directory");
-        }
-
-        self.directory = Some(Directory::new(0, 0)); 
-        self.mode |= 0x4000; 
-        Ok(())
-    }
-
-    pub fn as_directory(&self) -> Result<&Directory, &'static str> {
-        self.directory.as_ref().ok_or("Not a directory")
-    }
-
-    pub fn as_directory_mut(&mut self) -> Result<&mut Directory, &'static str> {
-        self.directory.as_mut().ok_or("Not a directory")
-    }
-
-    pub fn is_directory(&self) -> bool {
-        self.mode & 0x4000 != 0
-    }
 }
 
 impl Verifiable for Inode {
@@ -1689,103 +1565,6 @@ impl BlockAllocator {
         }
     }
 
-    pub fn allocate_contiguous_blocks(&mut self, count: u64) -> Option<(u64, Vec<u64>)> {
-        let start = self.allocate_blocks(count)?;
-        let mut block_list = Vec::with_capacity(count as usize);
-        
-        for offset in 0..count {
-            block_list.push(start + offset);
-        }
-        
-        Some((start, block_list))
-    }
-
-    pub fn try_extend_allocation(&mut self, start: u64, additional: u64) -> Option<Vec<u64>> {
-        
-        if self.verify_allocation(start, additional) {
-            return None;
-        }
-
-        let next_block = start + additional;
-        if let Some(new_start) = self.allocate_blocks(additional) {
-            if new_start == next_block {
-                let mut block_list = Vec::with_capacity(additional as usize);
-                for offset in 0..additional {
-                    block_list.push(next_block + offset);
-                }
-                return Some(block_list);
-            }
-            
-            self.deallocate_blocks(new_start, additional);
-        }
-        None
-    }
-
-    pub fn reallocate_blocks(&mut self, old_start: u64, old_count: u64, new_count: u64) 
-        -> Option<(u64, Vec<u64>)> 
-    {
-        if new_count <= old_count {
-            
-            if new_count > 0 {
-                self.deallocate_blocks(old_start + new_count, old_count - new_count);
-            }
-            let mut block_list = Vec::with_capacity(new_count as usize);
-            for offset in 0..new_count {
-                block_list.push(old_start + offset);
-            }
-            return Some((old_start, block_list));
-        }
-
-        
-        if let Some(extended_blocks) = self.try_extend_allocation(old_start, new_count - old_count) {
-            let mut block_list = Vec::with_capacity(new_count as usize);
-            for offset in 0..old_count {
-                block_list.push(old_start + offset);
-            }
-            block_list.extend(extended_blocks);
-            return Some((old_start, block_list));
-        }
-
-        
-        if let Some((new_start, new_blocks)) = self.allocate_contiguous_blocks(new_count) {
-            self.deallocate_blocks(old_start, old_count);
-            Some((new_start, new_blocks))
-        } else {
-            None
-        }
-    }
-
-    pub fn get_block_group(&self, block: u64) -> Option<(u64, u64)> {
-        for region in &self.regions {
-            if block >= region.start_block && block < region.start_block + region.block_count {
-                let index = ((block - region.start_block) / 64) as usize;
-                let bitmap = region.allocation_map[index].load(Ordering::SeqCst);
-                let start_bit = (block - region.start_block) % 64;
-                
-                
-                let mut group_start = block;
-                for bit in (0..start_bit).rev() {
-                    if bitmap & (1 << bit) == 0 {
-                        break;
-                    }
-                    group_start -= 1;
-                }
-                
-                
-                let mut group_end = block;
-                for bit in (start_bit + 1)..64 {
-                    if bitmap & (1 << bit) == 0 {
-                        break;
-                    }
-                    group_end += 1;
-                }
-                
-                return Some((group_start, group_end - group_start + 1));
-            }
-        }
-        None
-    }
-
     pub fn allocate_blocks(&mut self, count: u64) -> Option<u64> {
         for region in &self.regions {
             if region.free_blocks.load(Ordering::SeqCst) >= count {
@@ -1836,19 +1615,6 @@ impl BlockAllocator {
         None
     }
 
-    fn validate_allocation(&self, blocks: u64) -> Result<(), FsError> {
-        if blocks == 0 {
-            return Err(FsError::IoError);
-        }
-        if blocks > self.total_blocks {
-            return Err(FsError::IoError);
-        }
-        if self.get_free_blocks() < blocks {
-            return Err(FsError::IoError);
-        }
-        Ok(())
-    }
-
     pub fn deallocate_blocks(&mut self, start: u64, count: u64) -> bool {
         for region in &self.regions {
             if start >= region.start_block && 
@@ -1871,12 +1637,6 @@ impl BlockAllocator {
             }
         }
         false
-    }
-
-    pub fn get_free_blocks(&self) -> u64 {
-        self.regions.iter()
-            .map(|r| r.free_blocks.load(Ordering::SeqCst))
-            .sum()
     }
 
     pub fn verify_allocation(&self, start: u64, count: u64) -> bool {
