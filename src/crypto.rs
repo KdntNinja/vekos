@@ -159,7 +159,6 @@ impl CryptoVerifier {
             if (cpuid.ecx & (1 << 17)) == 0 {  
                 return None;
             }
-    
             
             let mut result: u64;
             core::arch::asm!(
