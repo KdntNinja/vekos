@@ -28,6 +28,7 @@ use x86_64::{
 use crate::println;
 use crate::MEMORY_MANAGER;
 use crate::gdt::GDT;
+use crate::syscall::TOP_OF_KERNEL_STACK;
 use x86_64::structures::paging::FrameAllocator;
 use x86_64::structures::paging::PageTableFlags;
 use crate::tsc;
@@ -48,7 +49,6 @@ use lazy_static::lazy_static;
 use alloc::vec;
 use alloc::collections::BTreeMap;
 
-static TOP_OF_KERNEL_STACK: AtomicU64 = AtomicU64::new(0);
 const KERNEL_STACK_SIZE: usize = 16 * 1024; 
 pub const USER_STACK_SIZE: usize = 1024 * 1024; 
 pub const USER_STACK_TOP: u64 = 0x0000_7FFF_FFFF_0000;
@@ -467,7 +467,7 @@ impl Process {
         serial_println!("CS: {:#x}", self.context.regs.cs);
         serial_println!("SS: {:#x}", self.context.regs.ss);
         serial_println!("RFLAGS: {:#x}", self.context.regs.rflags);
-
+    
         let user_cs = self.context.regs.cs;
         let user_ss = self.context.regs.ss;
         let user_rflags = self.context.regs.rflags;
@@ -476,20 +476,20 @@ impl Process {
     
         unsafe {
             x86_64::instructions::interrupts::disable();
-
+    
             asm!(
                 "mov gs:[{0}], rsp",
                 in(reg) TOP_OF_KERNEL_STACK.load(core::sync::atomic::Ordering::SeqCst),
                 options(nostack)
             );
-
+    
             asm!(
                 "mov rcx, {}",
                 "mov r11, {}",
                 "mov rsp, {}",
-
+    
                 "swapgs",
-
+    
                 "sysretq",
                 in(reg) user_rip,
                 in(reg) user_rflags,
