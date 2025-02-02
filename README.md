@@ -41,6 +41,9 @@ VEKOS is an experimental operating system written in Rust that focuses on verifi
   - Signal handling
   - Process groups and sessions
 
+- **Program Execution**
+  - Basic program execution using SYSCALL/SYSRET.
+
 - **Shell**
   - Command history
   - Line editing
