@@ -1018,7 +1018,6 @@ impl MemoryManager {
         let flags = PageTableFlags::PRESENT 
             | PageTableFlags::WRITABLE 
             | PageTableFlags::NO_EXECUTE;
-    
         
         for i in 0..pages {
             let page = Page::containing_address(heap_start + (i * Page::<Size4KiB>::SIZE as usize) as u64);

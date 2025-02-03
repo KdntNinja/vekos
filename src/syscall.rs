@@ -1,20 +1,20 @@
 /*
- * Copyright 2023-2024 Juan Miguel Giraldo
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+* Copyright 2023-2024 Juan Miguel Giraldo
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*     http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
 
- use x86_64::{
+use x86_64::{
     VirtAddr,
 };
 
@@ -61,6 +61,13 @@ pub struct ProcessMemory {
     pub total_allocated: usize,
 }
 
+#[no_mangle]
+pub extern "C" fn test_syscall_function() {
+    serial_println!("============= TEST SYSCALL FUNCTION REACHED =============");
+    serial_println!("assembly to rust is working!");
+    serial_println!("=======================================================");
+}
+
 #[naked]
 unsafe extern "x86-interrupt" fn syscall_handler() {
     naked_asm!(
@@ -84,19 +91,50 @@ unsafe extern "x86-interrupt" fn syscall_handler() {
         "jmp 2b",
 
         "5:",
-        "mov rax, 0xb8000",
-        "mov byte ptr [rax], 84",
-        "mov byte ptr [rax + 1], 15",
-        "mov byte ptr [rax + 2], 69",
-        "mov byte ptr [rax + 3], 15",
-        "mov byte ptr [rax + 4], 83",
-        "mov byte ptr [rax + 5], 15",
-        "mov byte ptr [rax + 6], 84",
-        "mov byte ptr [rax + 7], 15",
+
+        "push rax",
+        "push rcx",
+        "push rdx",
+        "push rbx",
+        "push rbp",
+        "push rsi",
+        "push rdi",
+        "push r8",
+        "push r9",
+        "push r10",
+        "push r11",
+        "push r12",
+        "push r13",
+        "push r14",
+        "push r15",
+
+        "mov rbp, rsp",
+        "and rsp, -16",
+        "sub rsp, 32",
+
+        "call gs:[0x1008]",
+
+        "mov rsp, rbp",
+
+        "pop r15",
+        "pop r14",
+        "pop r13",
+        "pop r12",
+        "pop r11",
+        "pop r10",
+        "pop r9",
+        "pop r8",
+        "pop rdi",
+        "pop rsi",
+        "pop rbp",
+        "pop rbx",
+        "pop rdx",
+        "pop rcx",
+        "pop rax",
+        
         "jmp 2b",
     );
 }
-
 
 pub fn init() {
     serial_println!("Starting syscall initialization...");
@@ -122,8 +160,9 @@ pub fn init() {
             }
 
             let stack_flags = PageTableFlags::PRESENT 
-                | PageTableFlags::WRITABLE 
-                | PageTableFlags::NO_EXECUTE;
+                | PageTableFlags::WRITABLE
+                | PageTableFlags::NO_EXECUTE
+                | PageTableFlags::GLOBAL;
 
             let handler_flags = PageTableFlags::PRESENT 
                 | PageTableFlags::WRITABLE 
@@ -153,6 +192,9 @@ pub fn init() {
                 .expect("Failed to allocate handler frame");
             
             let handler_page = Page::containing_address(handler_region);
+
+            serial_println!("test_syscall_function address: {:#x}", test_syscall_function as *const () as u64);
+
             mm.map_page(handler_page, handler_frame, handler_flags)
                 .expect("Failed to map handler page");
 
@@ -171,14 +213,23 @@ pub fn init() {
         drop(mm_lock);
 
         serial_println!("Setting up CPU state...");
+        serial_println!("KernelGsBase setting to: {:#x}", kernel_region_start.as_u64());
+        serial_println!("GsBase setting to: {:#x}", scratch_region_start.as_u64());
         x86_64::registers::model_specific::KernelGsBase::write(kernel_region_start);
         x86_64::registers::model_specific::GsBase::write(scratch_region_start);
+
+        let scratch_ptr = scratch_region_start.as_u64() as *mut u64;
+        unsafe {
+            core::ptr::write(scratch_ptr.add(0x1000 / 8), kernel_region_start.as_u64() + (16 * 4096));
+            core::ptr::write(scratch_ptr.add(0x1008 / 8), test_syscall_function as *const () as u64);
+        }
 
         x86_64::registers::model_specific::Efer::update(|efer| {
             *efer |= x86_64::registers::model_specific::EferFlags::SYSTEM_CALL_EXTENSIONS;
         });
         
         x86_64::registers::model_specific::SFMask::write(x86_64::registers::rflags::RFlags::INTERRUPT_FLAG);
+        serial_println!("Handler region for syscalls: {:#x}", handler_region.as_u64());
         x86_64::registers::model_specific::LStar::write(handler_region);
 
         x86_64::registers::model_specific::Star::write(
