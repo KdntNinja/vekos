@@ -63,9 +63,10 @@ pub struct ProcessMemory {
 
 #[no_mangle]
 pub extern "C" fn test_syscall_function() {
+    serial_println!("=========================================================");
     serial_println!("============= TEST SYSCALL FUNCTION REACHED =============");
-    serial_println!("assembly to rust is working!");
-    serial_println!("=======================================================");
+    serial_println!("=============  ASSEMBLY TO RUST IS WORKING  =============");
+    serial_println!("=========================================================");
 }
 
 #[naked]

@@ -1,18 +1,18 @@
 /*
- * Copyright 2023-2024 Juan Miguel Giraldo
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- *     http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
- */
+* Copyright 2023-2024 Juan Miguel Giraldo
+*
+* Licensed under the Apache License, Version 2.0 (the "License");
+* you may not use this file except in compliance with the License.
+* You may obtain a copy of the License at
+*
+*     http://www.apache.org/licenses/LICENSE-2.0
+*
+* Unless required by applicable law or agreed to in writing, software
+* distributed under the License is distributed on an "AS IS" BASIS,
+* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+* See the License for the specific language governing permissions and
+* limitations under the License.
+*/
 
 #![no_std]
 #![no_main]
@@ -359,23 +359,34 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
     }
 
-    let mut mm_lock = MEMORY_MANAGER.lock();
-    if let Some(mm) = mm_lock.as_mut() {
-        match Process::new(mm) {
-            Ok(mut init_process) => {
-                init_process.current_dir = String::from("/");
-                serial_println!("Loading VETests program...");
-                if let Ok(program_data) = FILESYSTEM.lock().read_file("/programs/VETests") {
-                    if let Err(e) = init_process.load_program(&program_data, mm) {
-                        serial_println!("Failed to load program: {:?}", e);
-                    } else {
-                        init_process.switch_to_user_mode();
-                    }
-                }
-            },
-            Err(e) => serial_println!("Failed to create process: {:?}", e)
+    // Userspace Startup
+    // let mut mm_lock = MEMORY_MANAGER.lock();
+    // if let Some(mm) = mm_lock.as_mut() {
+    //    match Process::new(mm) {
+    //        Ok(mut init_process) => {
+    //            init_process.current_dir = String::from("/");
+    //            serial_println!("Loading VETests program...");
+    //            if let Ok(program_data) = FILESYSTEM.lock().read_file("/programs/VETests") {
+    //                if let Err(e) = init_process.load_program(&program_data, mm) {
+    //                    serial_println!("Failed to load program: {:?}", e);
+    //                } else {
+    //                    init_process.switch_to_user_mode();
+    //                }
+    //            }
+    //        },
+    //        Err(e) => serial_println!("Failed to create process: {:?}", e)
+    //    }
+    // }
+
+    if let Ok(mut shell) = shell::Shell::new() {
+        if let Err(e) = shell.init() {
+            serial_println!("Failed to initialize shell: {:?}", e);
+        } else {
+            if let Err(e) = shell.run() {
+                serial_println!("Shell exited with error: {:?}", e);
+            }
         }
-}
+    }
 
     let mut last_schedule = 0;
     loop {
