@@ -61,12 +61,116 @@ pub struct ProcessMemory {
     pub total_allocated: usize,
 }
 
+#[repr(usize)]
+pub enum SyscallNumber {
+    Write = 1,
+    Exit = 60,
+}
+
+type SyscallFn = fn(u64, u64, u64, u64, u64, u64) -> u64;
+
+lazy_static! {
+    static ref SYSCALL_TABLE: Vec<Option<SyscallFn>> = {
+        let mut table = Vec::with_capacity(64);
+        table.resize(64, None);
+        
+        table[SyscallNumber::Write as usize] = Some(sys_write as fn(u64, u64, u64, u64, u64, u64) -> u64);
+        table[SyscallNumber::Exit as usize] = Some(sys_exit as fn(u64, u64, u64, u64, u64, u64) -> u64);
+        
+        table
+    };
+}
+
 #[no_mangle]
-pub extern "C" fn test_syscall_function() {
-    serial_println!("=========================================================");
-    serial_println!("============= TEST SYSCALL FUNCTION REACHED =============");
-    serial_println!("=============  ASSEMBLY TO RUST IS WORKING  =============");
-    serial_println!("=========================================================");
+pub extern "C" fn dispatch_syscall() {
+    let syscall_nr: u64;
+    let fd: u64;
+    let buf: u64;
+    let count: u64;
+    let r8: u64;
+    let r9: u64;
+    let r10: u64;
+    let r11: u64;
+    
+    unsafe {
+        asm!(
+            "mov {0}, rax",
+            "mov {1}, rdi",
+            "mov {2}, rsi",
+            "mov {3}, rdx",
+            "mov {4}, r8",
+            "mov {5}, r9",
+            "mov {6}, r10",
+            "mov {7}, r11",
+            out(reg) syscall_nr,
+            out(reg) fd,
+            out(reg) buf,
+            out(reg) count,
+            out(reg) r8,
+            out(reg) r9,
+            out(reg) r10,
+            out(reg) r11,
+        );
+        
+        serial_println!("Syscall registers:");
+        serial_println!("  rax (syscall): {:#x}", syscall_nr);
+        serial_println!("  rdi (fd): {:#x}", fd);
+        serial_println!("  rsi (buf): {:#x}", buf);
+        serial_println!("  rdx (count): {:#x}", count);
+        serial_println!("  r8: {:#x}", r8);
+        serial_println!("  r9: {:#x}", r9);
+        serial_println!("  r10: {:#x}", r10);
+        serial_println!("  r11: {:#x}", r11);
+    }
+
+    let result = if syscall_nr >= SYSCALL_TABLE.len() as u64 {
+        u64::MAX
+    } else if let Some(syscall_fn) = SYSCALL_TABLE.get(syscall_nr as usize).and_then(|f| *f) {
+        syscall_fn(fd, buf, count, 0, 0, 0)
+    } else {
+        u64::MAX
+    };
+
+    unsafe {
+        asm!("mov rax, {0}", in(reg) result);
+    }
+}
+
+fn sys_write(fd: u64, buf: u64, count: u64, _: u64, _: u64, _: u64) -> u64 {
+    serial_println!("Reached the sys_write.");
+    serial_println!("fd: {}, buf: {:#x}, count: {}", fd, buf, count);
+
+    if fd != 1 && fd != 2 {
+        return u64::MAX;
+    }
+
+    let addr_valid = buf >= 0x400000 && buf + count <= 0x800000;
+
+    if !addr_valid {
+        serial_println!("Invalid buffer address range: {:#x}", buf);
+        return u64::MAX;
+    }
+
+    let slice = unsafe {
+        let buffer_ptr = buf as *const u8;
+        if buffer_ptr.is_null() {
+            return u64::MAX;
+        }
+        core::slice::from_raw_parts(buffer_ptr, count as usize)
+    };
+
+    serial_println!("Writing {} bytes", count);
+    for &byte in slice {
+        WRITER.lock().write_byte(byte);
+    }
+    
+    count
+}
+
+fn sys_exit(_code: u64, _: u64, _: u64, _: u64, _: u64, _: u64) -> u64 {
+    loop {
+        x86_64::instructions::hlt();
+    }
 }
 
 #[naked]
@@ -75,23 +179,6 @@ unsafe extern "x86-interrupt" fn syscall_handler() {
         "swapgs",
         "mov gs:[0x0], rsp",
         "mov rsp, gs:[0x1000]",
-
-        "cmp rax, 1",    
-        "je 3f",
-        
-        "cmp rax, 2",    
-        "je 5f",         
-
-        "2:",
-        "mov rsp, gs:[0x0]",
-        "swapgs",
-        "sysretq",
-
-        "3:",
-        "mov rdi, 0",
-        "jmp 2b",
-
-        "5:",
 
         "push rax",
         "push rcx",
@@ -133,7 +220,9 @@ unsafe extern "x86-interrupt" fn syscall_handler() {
         "pop rcx",
         "pop rax",
         
-        "jmp 2b",
+        "mov rsp, gs:[0x0]",
+        "swapgs",
+        "sysretq",
     );
 }
 
@@ -194,8 +283,6 @@ pub fn init() {
             
             let handler_page = Page::containing_address(handler_region);
 
-            serial_println!("test_syscall_function address: {:#x}", test_syscall_function as *const () as u64);
-
             mm.map_page(handler_page, handler_frame, handler_flags)
                 .expect("Failed to map handler page");
 
@@ -222,8 +309,10 @@ pub fn init() {
         let scratch_ptr = scratch_region_start.as_u64() as *mut u64;
         unsafe {
             core::ptr::write(scratch_ptr.add(0x1000 / 8), kernel_region_start.as_u64() + (16 * 4096));
-            core::ptr::write(scratch_ptr.add(0x1008 / 8), test_syscall_function as *const () as u64);
+            core::ptr::write(scratch_ptr.add(0x1008 / 8), dispatch_syscall as *const () as u64);
         }
+
+        lazy_static::initialize(&SYSCALL_TABLE);
 
         x86_64::registers::model_specific::Efer::update(|efer| {
             *efer |= x86_64::registers::model_specific::EferFlags::SYSTEM_CALL_EXTENSIONS;
