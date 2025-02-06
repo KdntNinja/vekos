@@ -25,6 +25,7 @@ use x86_64::registers::model_specific::Msr;
 use core::arch::naked_asm;
 use core::arch::asm;
 use crate::vga_buffer::WRITER;
+use crate::tty;
 use crate::vga_buffer::ColorCode;
 use crate::MEMORY_MANAGER;
 use crate::vga_buffer::Color;
@@ -63,6 +64,7 @@ pub struct ProcessMemory {
 
 #[repr(usize)]
 pub enum SyscallNumber {
+    Read = 0,
     Write = 1,
     Exit = 60,
 }
@@ -74,6 +76,7 @@ lazy_static! {
         let mut table = Vec::with_capacity(64);
         table.resize(64, None);
         
+        table[SyscallNumber::Read as usize] = Some(sys_read as fn(u64, u64, u64, u64, u64, u64) -> u64);
         table[SyscallNumber::Write as usize] = Some(sys_write as fn(u64, u64, u64, u64, u64, u64) -> u64);
         table[SyscallNumber::Exit as usize] = Some(sys_exit as fn(u64, u64, u64, u64, u64, u64) -> u64);
         
@@ -137,15 +140,13 @@ pub extern "C" fn dispatch_syscall() {
 }
 
 fn sys_write(fd: u64, buf: u64, count: u64, _: u64, _: u64, _: u64) -> u64 {
-    serial_println!("Reached the sys_write.");
-    serial_println!("fd: {}, buf: {:#x}, count: {}", fd, buf, count);
+    serial_println!("sys_write: fd={}, buf={:#x}, count={}", fd, buf, count);
 
     if fd != 1 && fd != 2 {
         return u64::MAX;
     }
 
     let addr_valid = buf >= 0x400000 && buf + count <= 0x800000;
-
     if !addr_valid {
         serial_println!("Invalid buffer address range: {:#x}", buf);
         return u64::MAX;
@@ -159,12 +160,46 @@ fn sys_write(fd: u64, buf: u64, count: u64, _: u64, _: u64, _: u64) -> u64 {
         core::slice::from_raw_parts(buffer_ptr, count as usize)
     };
 
-    serial_println!("Writing {} bytes", count);
-    for &byte in slice {
-        WRITER.lock().write_byte(byte);
+    tty::write_tty(slice) as u64
+}
+
+fn sys_read(fd: u64, buf: u64, count: u64, _: u64, _: u64, _: u64) -> u64 {
+    serial_println!("\n=== sys_read entry ===");
+    serial_println!("Parameters:");
+    serial_println!("  fd: {}", fd);
+    serial_println!("  buf: {:#x}", buf);
+    serial_println!("  count: {} bytes", count);
+
+    if fd != 0 {
+        serial_println!("ERROR: Invalid fd {} (only stdin/0 supported)", fd);
+        return u64::MAX;
     }
-    
-    count
+
+    let addr_valid = buf >= 0x400000 && buf + count <= 0x800000;
+    if !addr_valid {
+        serial_println!("ERROR: Invalid buffer address range: {:#x}", buf);
+        return u64::MAX;
+    }
+
+    let buffer = unsafe {
+        let buffer_ptr = buf as *mut u8;
+        if buffer_ptr.is_null() {
+            serial_println!("ERROR: Null buffer pointer");
+            return u64::MAX;
+        }
+        core::slice::from_raw_parts_mut(buffer_ptr, count as usize)
+    };
+
+    loop {
+        let bytes_read = tty::read_tty(buffer);
+        if bytes_read > 0 {
+            return bytes_read as u64;
+        }
+
+        x86_64::instructions::interrupts::enable();
+        core::hint::spin_loop();
+        x86_64::instructions::interrupts::disable();
+    }
 }
 
 fn sys_exit(_code: u64, _: u64, _: u64, _: u64, _: u64, _: u64) -> u64 {
@@ -218,7 +253,6 @@ unsafe extern "x86-interrupt" fn syscall_handler() {
         "pop rbx",
         "pop rdx",
         "pop rcx",
-        "pop rax",
         
         "mov rsp, gs:[0x0]",
         "swapgs",

@@ -23,6 +23,7 @@ use x86_64::PrivilegeLevel;
 use core::arch::asm;
 use crate::elf;
 use spin;
+use crate::tty;
 use lazy_static::lazy_static;
 use x86_64::structures::paging::FrameAllocator;
 use crate::FRAMEBUFFER;
@@ -255,22 +256,18 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(
     _stack_frame: InterruptStackFrame)
 {
     use x86_64::instructions::port::Port;
-    use crate::syscall::push_to_keyboard_buffer;
     use pc_keyboard::DecodedKey;
 
-    
     let mut port = Port::new(0x60);
     let scancode: u8 = unsafe { port.read() };
     
     serial_println!("Keyboard interrupt: scancode={:#x}", scancode);
 
-    
     unsafe {
         PICS.lock()
-            .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
+            .notify_end_of_interrupt(InterruptIndex::Keyboard.as_u8());
     }
 
-    
     let mut keyboard = KEYBOARD.lock();
     
     if let Ok(Some(key_event)) = keyboard.add_byte(scancode) {
@@ -278,37 +275,33 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(
             match key {
                 DecodedKey::Unicode(character) => {
                     serial_println!("Received character: {}", character);
-                    push_to_keyboard_buffer(character as u8);
+                    tty::process_keyboard_input(character as u8);
                 },
                 DecodedKey::RawKey(key) => {
                     serial_println!("Received raw key: {:?}", key);
                     match key {
                         KeyCode::ArrowLeft => {
-                            
-                            push_to_keyboard_buffer(27);  
-                            push_to_keyboard_buffer(b'[');
-                            push_to_keyboard_buffer(b'D');
+                            tty::process_keyboard_input(27);
+                            tty::process_keyboard_input(b'[');
+                            tty::process_keyboard_input(b'D');
                         },
                         KeyCode::ArrowRight => {
-                            
-                            push_to_keyboard_buffer(27);  
-                            push_to_keyboard_buffer(b'[');
-                            push_to_keyboard_buffer(b'C');
+                            tty::process_keyboard_input(27);
+                            tty::process_keyboard_input(b'[');
+                            tty::process_keyboard_input(b'C');
                         },
                         KeyCode::ArrowUp => {
-                            
-                            push_to_keyboard_buffer(27);  
-                            push_to_keyboard_buffer(b'[');
-                            push_to_keyboard_buffer(b'A');
+                            tty::process_keyboard_input(27);
+                            tty::process_keyboard_input(b'[');
+                            tty::process_keyboard_input(b'A');
                         },
                         KeyCode::ArrowDown => {
-                            
-                            push_to_keyboard_buffer(27);  
-                            push_to_keyboard_buffer(b'[');
-                            push_to_keyboard_buffer(b'B');
+                            tty::process_keyboard_input(27);
+                            tty::process_keyboard_input(b'[');
+                            tty::process_keyboard_input(b'B');
                         },
-                        KeyCode::Backspace => push_to_keyboard_buffer(8),
-                        KeyCode::Delete => push_to_keyboard_buffer(127),
+                        KeyCode::Backspace => tty::process_keyboard_input(8),
+                        KeyCode::Delete => tty::process_keyboard_input(127),
                         _ => {}
                     }
                 }

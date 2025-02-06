@@ -27,6 +27,7 @@
 extern crate alloc;
 pub mod serial;
 pub mod signals;
+pub mod tty;
 pub mod graphics_hal;
 pub mod page_table_cache;
 use x86_64::instructions::port::Port;
@@ -233,6 +234,10 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     serial_println!("Time system initialized successfully");
     BootSplash::print_boot_message("RTC initialization complete", BootMessageType::Success);
 
+    BootSplash::print_boot_message("Initializing TTY...", BootMessageType::Info);
+    tty::init();
+    BootSplash::print_boot_message("TTY initialization complete", BootMessageType::Success);
+
     for _ in 0..1000 {
         core::hint::spin_loop();
     }
@@ -359,33 +364,22 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
     }
 
-    // Userspace Startup
-    // let mut mm_lock = MEMORY_MANAGER.lock();
-    // if let Some(mm) = mm_lock.as_mut() {
-    //    match Process::new(mm) {
-    //        Ok(mut init_process) => {
-    //            init_process.current_dir = String::from("/");
-    //            serial_println!("Loading VETests program...");
-    //            if let Ok(program_data) = FILESYSTEM.lock().read_file("/programs/VETests") {
-    //                if let Err(e) = init_process.load_program(&program_data, mm) {
-    //                    serial_println!("Failed to load program: {:?}", e);
-    //                } else {
-    //                    init_process.switch_to_user_mode();
-    //                }
-    //            }
-    //        },
-    //        Err(e) => serial_println!("Failed to create process: {:?}", e)
-    //    }
-    // }
-
-    if let Ok(mut shell) = shell::Shell::new() {
-        if let Err(e) = shell.init() {
-            serial_println!("Failed to initialize shell: {:?}", e);
-        } else {
-            if let Err(e) = shell.run() {
-                serial_println!("Shell exited with error: {:?}", e);
-            }
-        }
+    let mut mm_lock = MEMORY_MANAGER.lock();
+    if let Some(mm) = mm_lock.as_mut() {
+       match Process::new(mm) {
+           Ok(mut init_process) => {
+               init_process.current_dir = String::from("/");
+               serial_println!("Loading VETests program...");
+               if let Ok(program_data) = FILESYSTEM.lock().read_file("/programs/VETests") {
+                   if let Err(e) = init_process.load_program(&program_data, mm) {
+                       serial_println!("Failed to load program: {:?}", e);
+                   } else {
+                       init_process.switch_to_user_mode();
+                   }
+               }
+           },
+           Err(e) => serial_println!("Failed to create process: {:?}", e)
+       }
     }
 
     let mut last_schedule = 0;
