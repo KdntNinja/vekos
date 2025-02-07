@@ -141,6 +141,10 @@ impl Writer {
             self.buffer.chars[row][col].write(blank);
         }
     }
+
+    pub fn flush(&mut self) {
+        self.set_cursor_position(self.column_position, BUFFER_HEIGHT - 1);
+    }
 }
 
 lazy_static! {

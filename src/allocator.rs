@@ -69,7 +69,6 @@ fn alloc_error_handler(layout: Layout) -> ! {
             }
         }
     }
-
     
     {
         let mm_lock = MEMORY_MANAGER.lock();

@@ -22,6 +22,7 @@ use x86_64::VirtAddr;
 use x86_64::structures::paging::{Page, PageTableFlags};
 use crate::memory::MemoryError;
 use crate::memory::MemoryManager;
+use x86_64::structures::paging::Mapper;
 use x86_64::structures::paging::FrameAllocator;
 
 #[repr(C)]
@@ -54,6 +55,11 @@ pub struct ProgramHeader {
     p_align: u64,
 }
 
+const PT_LOAD: u32 = 1;
+const PF_X: u32 = 0x1;
+const PF_W: u32 = 0x2;
+const PF_R: u32 = 0x4;
+
 pub fn load_elf(data: &[u8], memory_manager: &mut MemoryManager) -> Result<VirtAddr, MemoryError> {
     serial_println!("Starting ELF loading");
     serial_println!("File size: {} bytes", data.len());
@@ -77,43 +83,70 @@ pub fn load_elf(data: &[u8], memory_manager: &mut MemoryManager) -> Result<VirtA
     let ph_count = header.e_phnum as usize;
 
     for i in 0..ph_count {
-
-        serial_println!("let ph_pos = ph_offset + i * size_of::<ProgramHeader>() coming.");
-
         let ph_pos = ph_offset + i * size_of::<ProgramHeader>();
         if ph_pos + size_of::<ProgramHeader>() > data.len() {
             return Err(MemoryError::InvalidExecutable);
         }
 
-        serial_println!("let ph = &*(data[ph_pos..].as_ptr() as *const ProgramHeader) coming.");
-
         let ph = unsafe { &*(data[ph_pos..].as_ptr() as *const ProgramHeader) };
 
-        serial_println!("if ph.p_type == 1 coming.");
+        if ph.p_type == PT_LOAD {
+            serial_println!("\nProgram header analysis:");
+            serial_println!("  Type: LOAD");
+            serial_println!("  Offset in file: {:#x}", ph.p_offset);
+            serial_println!("  Virtual Address: {:#x}", ph.p_vaddr);
+            serial_println!("  Physical Address: {:#x}", ph.p_paddr);
+            serial_println!("  File size: {:#x}", ph.p_filesz);
+            serial_println!("  Memory size: {:#x}", ph.p_memsz);
+            serial_println!("  Flags: {:#x} ({}{}{})", 
+                ph.p_flags,
+                if ph.p_flags & PF_R != 0 { "R" } else { "-" },
+                if ph.p_flags & PF_W != 0 { "W" } else { "-" },
+                if ph.p_flags & PF_X != 0 { "X" } else { "-" }
+            );
+            serial_println!("  Alignment: {:#x}", ph.p_align);
 
-        if ph.p_type == 1 {
+            if ph.p_filesz > 0 {
+                let segment_data = &data[ph.p_offset as usize..][..core::cmp::min(16, ph.p_filesz as usize)];
+                serial_println!("  First bytes in file: {:02x?}", segment_data);
+            }
+
             let start_page = Page::containing_address(VirtAddr::new(ph.p_vaddr));
             let end_page = Page::containing_address(VirtAddr::new(ph.p_vaddr + ph.p_memsz - 1));
 
             let mut flags = PageTableFlags::PRESENT | PageTableFlags::USER_ACCESSIBLE;
+            
+            if ph.p_flags & PF_W != 0 {
+                flags |= PageTableFlags::WRITABLE;
+            }
 
-            flags |= PageTableFlags::WRITABLE;
-
-            if ph.p_flags & 0x1 != 0 {
-            } else {
+            if ph.p_flags & PF_X == 0 {
                 flags |= PageTableFlags::NO_EXECUTE;
             }
 
+            serial_println!("Mapping pages with flags: {:#x}", flags.bits());
+
             for page in Page::range_inclusive(start_page, end_page) {
+                let page_addr = page.start_address().as_u64();
+                
+                if let Ok(_) = memory_manager.page_table.translate_page(page) {
+                    serial_println!("Page {:#x} already mapped, skipping", page_addr);
+                    continue;
+                }
+            
+                serial_println!("Mapping new page {:#x}", page_addr);
                 let frame = memory_manager.frame_allocator
                     .allocate_frame()
                     .ok_or(MemoryError::FrameAllocationFailed)?;
-
+            
                 unsafe {
-                    memory_manager.map_page(page, frame, flags)?;
+                    let temp_flags = flags | PageTableFlags::WRITABLE;
+                    serial_println!("Mapping page {:#x} to frame {:#x} with flags {:#x}", 
+                        page_addr, frame.start_address().as_u64(), temp_flags.bits());
+                    
+                    memory_manager.map_page(page, frame, temp_flags)?;
 
                     let dest_ptr = page.start_address().as_mut_ptr::<u8>();
-
                     core::ptr::write_bytes(dest_ptr, 0, Page::<Size4KiB>::SIZE as usize);
 
                     let page_offset = page.start_address().as_u64() - ph.p_vaddr;
@@ -123,19 +156,29 @@ pub fn load_elf(data: &[u8], memory_manager: &mut MemoryManager) -> Result<VirtA
                             Page::<Size4KiB>::SIZE as u64,
                             ph.p_filesz - page_offset
                         ) as usize;
-
+                    
                         if file_offset as usize + copy_size <= data.len() {
+                            serial_println!("Copying segment data:");
+                            serial_println!("  From file offset: {:#x}", file_offset);
+                            serial_println!("  To virtual address: {:#x}", page.start_address().as_u64());
+                            serial_println!("  Size: {:#x} bytes", copy_size);
+                            
+                            let src_slice = &data[file_offset as usize..][..copy_size];
+                            serial_println!("  Source data: {:02x?}", &src_slice[..core::cmp::min(16, src_slice.len())]);
+                            
                             core::ptr::copy_nonoverlapping(
                                 data.as_ptr().add(file_offset as usize),
                                 dest_ptr,
                                 copy_size
                             );
+
+                            let dest_slice = core::slice::from_raw_parts(dest_ptr, copy_size);
+                            serial_println!("  Copied data: {:02x?}", &dest_slice[..core::cmp::min(16, dest_slice.len())]);
                         }
                     }
 
-                    if ph.p_flags & 0x2 == 0 {
-                        let new_flags = flags & !PageTableFlags::WRITABLE;
-                        memory_manager.update_page_flags(page, new_flags)?;
+                    if ph.p_flags & PF_W == 0 {
+                        memory_manager.update_page_flags(page, flags)?;
                     }
                 }
             }

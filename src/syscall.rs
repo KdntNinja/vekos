@@ -139,6 +139,16 @@ pub extern "C" fn dispatch_syscall() {
     }
 }
 
+fn is_valid_user_addr(addr: u64, size: u64) -> bool {
+    let prog_valid = addr >= 0x400000 && addr + size <= 0x800000;
+    
+    let stack_start = 0x7fff00000000;
+    let stack_end   = 0x800000000000;
+    let stack_valid = addr >= stack_start && addr + size <= stack_end;
+    
+    prog_valid || stack_valid
+}
+
 fn sys_write(fd: u64, buf: u64, count: u64, _: u64, _: u64, _: u64) -> u64 {
     serial_println!("sys_write: fd={}, buf={:#x}, count={}", fd, buf, count);
 
@@ -146,19 +156,21 @@ fn sys_write(fd: u64, buf: u64, count: u64, _: u64, _: u64, _: u64) -> u64 {
         return u64::MAX;
     }
 
-    let addr_valid = buf >= 0x400000 && buf + count <= 0x800000;
-    if !addr_valid {
-        serial_println!("Invalid buffer address range: {:#x}", buf);
+    if !is_valid_user_addr(buf, count) {
+        serial_println!("ERROR: Invalid buffer range: {:#x}-{:#x}", buf, buf + count);
         return u64::MAX;
     }
 
     let slice = unsafe {
         let buffer_ptr = buf as *const u8;
         if buffer_ptr.is_null() {
+            serial_println!("Null buffer!");
             return u64::MAX;
         }
+        serial_println!("Buffer at {:#x}", buf);
         core::slice::from_raw_parts(buffer_ptr, count as usize)
     };
+    serial_println!("Buffer contents: {:?}", slice);
 
     tty::write_tty(slice) as u64
 }
@@ -175,9 +187,8 @@ fn sys_read(fd: u64, buf: u64, count: u64, _: u64, _: u64, _: u64) -> u64 {
         return u64::MAX;
     }
 
-    let addr_valid = buf >= 0x400000 && buf + count <= 0x800000;
-    if !addr_valid {
-        serial_println!("ERROR: Invalid buffer address range: {:#x}", buf);
+    if !is_valid_user_addr(buf, count) {
+        serial_println!("ERROR: Invalid buffer range: {:#x}-{:#x}", buf, buf + count);
         return u64::MAX;
     }
 
