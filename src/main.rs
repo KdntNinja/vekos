@@ -277,7 +277,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     BootSplash::print_boot_message("Initial process complete", BootMessageType::Success);
 
-    serial_println!("Starting framebuffer initialization...");
+    BootSplash::print_boot_message("Starting framebuffer initialization...", BootMessageType::Info);
     let framebuffer_info = framebuffer::FramebufferInfo {
         width: 800,
         height: 600,
