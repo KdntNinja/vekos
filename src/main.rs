@@ -363,7 +363,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
     }
 
-    // Userspace Startup
+    // Optional: userspace startup.
     // let mut mm_lock = MEMORY_MANAGER.lock();
     // if let Some(mm) = mm_lock.as_mut() {
     //    match Process::new(mm) {
