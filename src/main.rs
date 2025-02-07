@@ -277,6 +277,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     BootSplash::print_boot_message("Initial process complete", BootMessageType::Success);
 
+    serial_println!("Starting framebuffer initialization...");
     let framebuffer_info = framebuffer::FramebufferInfo {
         width: 800,
         height: 600,
@@ -363,33 +364,22 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
     }
 
-    // Optional: userspace startup.
-    // let mut mm_lock = MEMORY_MANAGER.lock();
-    // if let Some(mm) = mm_lock.as_mut() {
-    //    match Process::new(mm) {
-    //        Ok(mut init_process) => {
-    //            init_process.current_dir = String::from("/");
-    //            serial_println!("Loading VETests program...");
-    //            if let Ok(program_data) = FILESYSTEM.lock().read_file("/programs/VETests") {
-    //                if let Err(e) = init_process.load_program(&program_data, mm) {
-    //                    serial_println!("Failed to load program: {:?}", e);
-    //                } else {
-    //                    init_process.switch_to_user_mode();
-    //                }
-    //            }
-    //        },
-    //        Err(e) => serial_println!("Failed to create process: {:?}", e)
-    //    }
-    // }
-
-    if let Ok(mut shell) = shell::Shell::new() {
-        if let Err(e) = shell.init() {
-            serial_println!("Failed to initialize shell: {:?}", e);
-        } else {
-            if let Err(e) = shell.run() {
-                serial_println!("Shell exited with error: {:?}", e);
-            }
-        }
+    let mut mm_lock = MEMORY_MANAGER.lock();
+    if let Some(mm) = mm_lock.as_mut() {
+       match Process::new(mm) {
+           Ok(mut init_process) => {
+               init_process.current_dir = String::from("/");
+               serial_println!("Loading VETests program...");
+               if let Ok(program_data) = FILESYSTEM.lock().read_file("/programs/VETests") {
+                   if let Err(e) = init_process.load_program(&program_data, mm) {
+                       serial_println!("Failed to load program: {:?}", e);
+                   } else {
+                       init_process.switch_to_user_mode();
+                   }
+               }
+           },
+           Err(e) => serial_println!("Failed to create process: {:?}", e)
+       }
     }
 
     let mut last_schedule = 0;
