@@ -364,6 +364,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
     }
 
+    BootSplash::print_boot_message("Creating initial userspace program...", BootMessageType::Info);
     let mut mm_lock = MEMORY_MANAGER.lock();
     if let Some(mm) = mm_lock.as_mut() {
        match Process::new(mm) {
@@ -374,6 +375,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
                    if let Err(e) = init_process.load_program(&program_data, mm) {
                        serial_println!("Failed to load program: {:?}", e);
                    } else {
+                       BootSplash::print_boot_message("Userspace initialization complete", BootMessageType::Success);
                        init_process.switch_to_user_mode();
                    }
                }
