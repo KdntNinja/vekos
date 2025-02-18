@@ -416,7 +416,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     //    }
     // }
 
-    if let Ok(mut shell) = shell::Shell::new() {
+    if let Ok(mut shell) = Shell::new() {
         if let Err(e) = shell.init() {
             serial_println!("Failed to initialize shell: {:?}", e);
         } else {
