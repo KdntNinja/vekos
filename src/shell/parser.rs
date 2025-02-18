@@ -18,12 +18,16 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::str::Chars;
 
+/// Represents a token in the parsed input.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Token {
+    /// The value of the token.
     pub value: String,
+    /// The type of the token.
     pub token_type: TokenType,
 }
 
+/// Enum representing the different types of tokens.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenType {
     Command,
@@ -32,6 +36,7 @@ pub enum TokenType {
     Redirect,
 }
 
+/// Enum representing possible parsing errors.
 #[derive(Debug)]
 pub enum ParseError {
     UnterminatedQuote,
@@ -40,6 +45,7 @@ pub enum ParseError {
     InvalidSyntax(String),
 }
 
+/// A parser for shell-like command input.
 pub struct Parser<'a> {
     input: Chars<'a>,
     current: Option<char>,
@@ -47,6 +53,11 @@ pub struct Parser<'a> {
 }
 
 impl<'a> Parser<'a> {
+    /// Creates a new parser for the given input string.
+    ///
+    /// # Arguments
+    ///
+    /// * `input` - A string slice that holds the input to be parsed.
     pub fn new(input: &'a str) -> Self {
         let mut chars = input.chars();
         let current = chars.next();
@@ -57,10 +68,12 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Advances the parser to the next character.
     fn advance(&mut self) {
         self.current = self.input.next();
     }
 
+    /// Skips whitespace characters in the input.
     fn skip_whitespace(&mut self) {
         while let Some(c) = self.current {
             if !c.is_whitespace() {
@@ -70,6 +83,15 @@ impl<'a> Parser<'a> {
         }
     }
 
+    /// Parses a quoted string, handling escape sequences.
+    ///
+    /// # Arguments
+    ///
+    /// * `quote` - The quote character used to delimit the string.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the parsed string or a `ParseError`.
     fn parse_quoted_string(&mut self, quote: char) -> Result<String, ParseError> {
         let mut result = String::new();
         self.advance();
@@ -105,6 +127,11 @@ impl<'a> Parser<'a> {
         Err(ParseError::UnterminatedQuote)
     }
 
+    /// Parses a word (a sequence of non-whitespace characters).
+    ///
+    /// # Returns
+    ///
+    /// The parsed word as a `String`.
     fn parse_word(&mut self) -> String {
         let mut result = String::new();
 
@@ -132,6 +159,11 @@ impl<'a> Parser<'a> {
         result
     }
 
+    /// Parses the input into a vector of tokens.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a vector of tokens or a `ParseError`.
     pub fn parse(&mut self) -> Result<Vec<Token>, ParseError> {
         let mut is_first_token = true;
         self.tokens.clear();
@@ -198,6 +230,11 @@ impl<'a> Parser<'a> {
         Ok(self.tokens.clone())
     }
 
+    /// Validates the syntax of the parsed tokens.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or a `ParseError`.
     fn validate_syntax(&self) -> Result<(), ParseError> {
         let mut prev_token: Option<&Token> = None;
 
@@ -242,6 +279,7 @@ impl<'a> Parser<'a> {
 mod tests {
     use super::*;
 
+    /// Tests parsing a basic command.
     #[test]
     fn test_basic_command() {
         let mut parser = Parser::new("ls -la");
@@ -253,6 +291,7 @@ mod tests {
         assert_eq!(tokens[1].token_type, TokenType::Argument);
     }
 
+    /// Tests parsing a command with quoted strings.
     #[test]
     fn test_quoted_strings() {
         let mut parser = Parser::new("echo \"Hello World\"");
@@ -261,6 +300,7 @@ mod tests {
         assert_eq!(tokens[1].value, "Hello World");
     }
 
+    /// Tests parsing a command with escaped characters.
     #[test]
     fn test_escaped_characters() {
         let mut parser = Parser::new("echo \"Hello\\nWorld\"");

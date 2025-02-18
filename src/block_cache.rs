@@ -13,7 +13,6 @@
 * See the License for the specific language governing permissions and
 * limitations under the License.
 */
-
 use crate::format;
 use crate::fs::FSOperation;
 use crate::fs::FILESYSTEM;
@@ -29,22 +28,32 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 use x86_64::VirtAddr;
 
+/// Represents a cache entry for a block.
 #[derive(Debug)]
 pub struct CacheEntry {
+    /// The data of the block.
     data: [u8; 4096],
+    /// Indicates if the block is dirty.
     dirty: bool,
+    /// The hash of the block.
     hash: Hash,
 }
 
+/// Represents a block cache.
 #[derive(Debug)]
 pub struct BlockCache {
+    /// The entries in the cache.
     entries: BTreeMap<u64, CacheEntry>,
+    /// The state hash of the cache.
     state_hash: AtomicU64,
+    /// The hit count of the cache.
     hit_count: AtomicU64,
+    /// The miss count of the cache.
     miss_count: AtomicU64,
 }
 
 impl BlockCache {
+    /// Creates a new block cache.
     pub fn new() -> Self {
         Self {
             entries: BTreeMap::new(),
@@ -54,6 +63,15 @@ impl BlockCache {
         }
     }
 
+    /// Retrieves a block from the cache.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_num` - The block number to retrieve.
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing the block data if found.
     pub fn get_block(&mut self, block_num: u64) -> Option<Vec<u8>> {
         let filesystem = FILESYSTEM.lock();
         let mut buffer_manager = filesystem.superblock.buffer_manager.lock();
@@ -63,6 +81,16 @@ impl BlockCache {
             .map(|buffer| buffer.get_data().to_vec())
     }
 
+    /// Writes a block to the cache.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_num` - The block number to write.
+    /// * `data` - The data to write to the block.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or an error message.
     pub fn write_block(&mut self, block_num: u64, data: &[u8]) -> Result<(), &'static str> {
         if data.len() != 4096 {
             return Err("Invalid block size");
@@ -113,10 +141,20 @@ impl BlockCache {
         }
     }
 
+    /// Invalidates a block in the cache.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_num` - The block number to invalidate.
     pub fn invalidate(&mut self, block_num: u64) {
         self.entries.remove(&block_num);
     }
 
+    /// Flushes the cache, returning a vector of dirty blocks.
+    ///
+    /// # Returns
+    ///
+    /// A vector of tuples containing the block number and block data.
     pub fn flush(&mut self) -> Vec<(u64, [u8; 4096])> {
         let mut dirty_blocks = Vec::new();
 
@@ -132,6 +170,11 @@ impl BlockCache {
         dirty_blocks
     }
 
+    /// Retrieves the cache statistics.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing the hit count and miss count.
     pub fn get_stats(&self) -> (u64, u64) {
         (
             self.hit_count.load(Ordering::Relaxed),
@@ -141,9 +184,18 @@ impl BlockCache {
 }
 
 impl Verifiable for BlockCache {
+    /// Generates a proof for a given operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `operation` - The operation to generate a proof for.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the operation proof or a verification error.
     fn generate_proof(
         &self,
-        operation: crate::verification::Operation,
+        _operation: crate::verification::Operation,
     ) -> Result<OperationProof, VerificationError> {
         let prev_state = self.state_hash();
 
@@ -155,10 +207,10 @@ impl Verifiable for BlockCache {
         let new_state = hash::combine_hashes(&entry_hashes);
 
         Ok(OperationProof {
-            op_id: crate::tsc::read_tsc(),
+            op_id: tsc::read_tsc(),
             prev_state,
             new_state,
-            data: crate::verification::ProofData::Memory(crate::verification::MemoryProof {
+            data: ProofData::Memory(crate::verification::MemoryProof {
                 operation: crate::verification::MemoryOpType::Modify,
                 address: VirtAddr::new(0),
                 size: 0,
@@ -168,11 +220,25 @@ impl Verifiable for BlockCache {
         })
     }
 
+    /// Verifies a given proof.
+    ///
+    /// # Arguments
+    ///
+    /// * `proof` - The proof to verify.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating whether the proof is valid or a verification error.
     fn verify_proof(&self, proof: &OperationProof) -> Result<bool, VerificationError> {
         let current_state = self.state_hash();
         Ok(current_state == proof.new_state)
     }
 
+    /// Retrieves the state hash of the cache.
+    ///
+    /// # Returns
+    ///
+    /// The state hash.
     fn state_hash(&self) -> Hash {
         Hash(self.state_hash.load(Ordering::SeqCst))
     }

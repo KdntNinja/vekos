@@ -38,6 +38,13 @@ pub const HEAP_START: usize = 0x_4444_4444_0000;
 pub const HEAP_SIZE: usize = 4 * 1024 * 1024;
 
 #[alloc_error_handler]
+/**
+ * Handles allocation errors by attempting to recover memory and retrying the allocation.
+ *
+ * # Arguments
+ *
+ * * `layout` - The layout of the memory that failed to allocate.
+ */
 fn alloc_error_handler(layout: Layout) -> ! {
     use core::sync::atomic::{AtomicBool, Ordering};
     static IN_OOM_HANDLER: AtomicBool = AtomicBool::new(false);
@@ -82,6 +89,18 @@ fn alloc_error_handler(layout: Layout) -> ! {
     loop {}
 }
 
+/**
+ * Initializes the heap by mapping the heap pages and setting up the allocator.
+ *
+ * # Arguments
+ *
+ * * `mapper` - A mutable reference to the page table mapper.
+ * * `frame_allocator` - A mutable reference to the frame allocator.
+ *
+ * # Returns
+ *
+ * A `Result` indicating success or a `MapToError`.
+ */
 pub fn init_heap(
     mapper: &mut impl Mapper<Size4KiB>,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,

@@ -1,18 +1,18 @@
 /*
-* Copyright 2023-2024 Juan Miguel Giraldo
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-*     http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*/
+ * Copyright 2023-2024 Juan Miguel Giraldo
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 use crate::fs::{FileStats, FileSystem, FILESYSTEM};
 use crate::print;
@@ -22,6 +22,7 @@ use crate::shell::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+/// Struct representing the flags for the `ls` command.
 #[derive(Debug, Clone, Copy)]
 pub struct LsFlags {
     long_format: bool,
@@ -32,6 +33,7 @@ pub struct LsFlags {
 }
 
 impl Default for LsFlags {
+    /// Provides default values for `LsFlags`.
     fn default() -> Self {
         Self {
             long_format: false,
@@ -43,6 +45,15 @@ impl Default for LsFlags {
     }
 }
 
+/// Parses the command-line arguments for the `ls` command.
+///
+/// # Arguments
+///
+/// * `args` - A slice of `String` containing the command-line arguments.
+///
+/// # Returns
+///
+/// A tuple containing the parsed `LsFlags` and a vector of paths.
 pub fn parse_ls_flags(args: &[String]) -> (LsFlags, Vec<String>) {
     let mut flags = LsFlags::default();
     let mut paths = Vec::new();
@@ -71,6 +82,15 @@ pub fn parse_ls_flags(args: &[String]) -> (LsFlags, Vec<String>) {
     (flags, paths)
 }
 
+/// Formats the file permissions into a string representation.
+///
+/// # Arguments
+///
+/// * `stats` - A reference to `FileStats` containing the file's metadata.
+///
+/// # Returns
+///
+/// A `String` representing the file's permissions.
 fn format_permissions(stats: &FileStats) -> String {
     let mut perms = String::with_capacity(10);
     perms.push(if stats.is_directory { 'd' } else { '-' });
@@ -81,6 +101,16 @@ fn format_permissions(stats: &FileStats) -> String {
     perms
 }
 
+/// Formats the file size into a human-readable string if specified.
+///
+/// # Arguments
+///
+/// * `size` - The size of the file in bytes.
+/// * `human_readable` - A boolean indicating whether to format the size in a human-readable format.
+///
+/// # Returns
+///
+/// A `String` representing the formatted file size.
 fn format_size(size: usize, human_readable: bool) -> String {
     if !human_readable {
         return format!("{:>8}", size);
@@ -102,6 +132,15 @@ fn format_size(size: usize, human_readable: bool) -> String {
     }
 }
 
+/// Formats the timestamp into a human-readable time string.
+///
+/// # Arguments
+///
+/// * `timestamp` - The timestamp in seconds since the epoch.
+///
+/// # Returns
+///
+/// A `String` representing the formatted time.
 fn format_time(timestamp: u64) -> String {
     let secs = timestamp % 60;
     let mins = (timestamp / 60) % 60;
@@ -109,6 +148,16 @@ fn format_time(timestamp: u64) -> String {
     format!("{:02}:{:02}:{:02}", hours, mins, secs)
 }
 
+/// Lists the contents of a directory based on the provided path and flags.
+///
+/// # Arguments
+///
+/// * `path` - A string slice representing the path of the directory to list.
+/// * `flags` - An `LsFlags` struct containing the flags for the `ls` command.
+///
+/// # Returns
+///
+/// A `Result` indicating success or failure.
 pub fn list_directory(path: &str, flags: LsFlags) -> Result<(), &'static str> {
     serial_println!("Listing directory: {}", path);
     let normalized_path = crate::fs::normalize_path(path);

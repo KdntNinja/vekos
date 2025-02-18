@@ -94,31 +94,38 @@ use crate::{
 
 entry_point!(kernel_main);
 
+/// Global memory manager instance.
 static MEMORY_MANAGER: Mutex<Option<MemoryManager>> = Mutex::new(None);
 const LARGE_PAGE_THRESHOLD: usize = 512;
 
 lazy_static! {
+    /// Global scheduler instance.
     static ref SCHEDULER: Mutex<Option<Scheduler>> = Mutex::new(None);
 }
 
 lazy_static! {
+    /// Global framebuffer instance.
     pub static ref FRAMEBUFFER: Mutex<Option<framebuffer::Framebuffer>> = Mutex::new(None);
 }
 
 lazy_static! {
+    /// Global VBE driver instance.
     pub static ref VBE_DRIVER: Mutex<Option<VbeDriver>> = Mutex::new(None);
 }
 
+/// Palette colors used for drawing.
 pub const PALETTE_COLORS: [u32; 16] = [
     0xFF000000, 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFF00, 0xFFFF00FF, 0xFF00FFFF, 0xFFFFFFFF,
     0xFF808080, 0xFF800000, 0xFF008000, 0xFF000080, 0xFF808000, 0xFF800080, 0xFF008080, 0xFFC0C0C0,
 ];
 
+/// Represents the current drawing state.
 pub struct DrawingState {
     current_color: u32,
 }
 
 impl DrawingState {
+    /// Creates a new drawing state with the default color.
     pub fn new() -> Self {
         Self {
             current_color: PALETTE_COLORS[0],
@@ -127,9 +134,15 @@ impl DrawingState {
 }
 
 lazy_static! {
+    /// Global drawing state instance.
     pub static ref DRAWING_STATE: Mutex<DrawingState> = Mutex::new(DrawingState::new());
 }
 
+/// Main entry point for the kernel.
+///
+/// # Arguments
+///
+/// * `boot_info` - A reference to the boot information provided by the bootloader.
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
     BootSplash::show_splash();
     BootSplash::print_boot_message("Starting VEKOS boot sequence...", BootMessageType::Info);
@@ -437,6 +450,11 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
 }
 
+/// Panic handler for the kernel.
+///
+/// # Arguments
+///
+/// * `info` - Information about the panic.
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     serial_println!(
@@ -463,6 +481,11 @@ fn panic(info: &PanicInfo) -> ! {
     loop {}
 }
 
+/// Test runner for the kernel.
+///
+/// # Arguments
+///
+/// * `tests` - A slice of test functions to run.
 #[cfg(test)]
 fn test_runner(tests: &[&dyn Fn()]) {
     serial_println!("Running {} tests", tests.len());
@@ -472,6 +495,11 @@ fn test_runner(tests: &[&dyn Fn()]) {
     exit_qemu(QemuExitCode::Success);
 }
 
+/// Runs memory tests.
+///
+/// # Returns
+///
+/// A `TestResult` indicating the outcome of the tests.
 #[cfg(test)]
 fn run_memory_tests() -> TestResult {
     use tests::memory::heap_tests;
@@ -510,6 +538,7 @@ fn run_memory_tests() -> TestResult {
     }
 }
 
+/// QEMU exit codes for the test runner.
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -518,6 +547,11 @@ pub enum QemuExitCode {
     Failed = 0x11,
 }
 
+/// Exits QEMU with the given exit code.
+///
+/// # Arguments
+///
+/// * `exit_code` - The exit code to use.
 #[cfg(test)]
 pub fn exit_qemu(exit_code: QemuExitCode) -> ! {
     use x86_64::instructions::port::Port;

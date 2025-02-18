@@ -17,9 +17,11 @@
 use crate::vga_buffer::{Color, ColorCode, WRITER};
 use core::fmt::Write;
 
+/// Represents the boot splash screen.
 pub struct BootSplash;
 
 impl BootSplash {
+    /// Displays the boot splash screen.
     pub fn show_splash() {
         let mut writer = WRITER.lock();
         let original_color = writer.color_code;
@@ -42,6 +44,12 @@ impl BootSplash {
         writer.color_code = original_color;
     }
 
+    /// Prints a boot message with a specific status.
+    ///
+    /// # Arguments
+    ///
+    /// * `msg` - The message to print.
+    /// * `status` - The status type of the message.
     pub fn print_boot_message(msg: &str, status: BootMessageType) {
         let mut writer = WRITER.lock();
         let original_color = writer.color_code;
@@ -71,6 +79,7 @@ impl BootSplash {
     }
 }
 
+/// Represents the type of boot message.
 #[derive(Debug, Clone, Copy)]
 pub enum BootMessageType {
     Info,

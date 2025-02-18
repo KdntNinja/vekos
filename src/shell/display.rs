@@ -1,18 +1,18 @@
 /*
-* Copyright 2023-2024 Juan Miguel Giraldo
-*
-* Licensed under the Apache License, Version 2.0 (the "License");
-* you may not use this file except in compliance with the License.
-* You may obtain a copy of the License at
-*
-*     http://www.apache.org/licenses/LICENSE-2.0
-*
-* Unless required by applicable law or agreed to in writing, software
-* distributed under the License is distributed on an "AS IS" BASIS,
-* WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-* See the License for the specific language governing permissions and
-* limitations under the License.
-*/
+ * Copyright 2023-2024 Juan Miguel Giraldo
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
 use super::ShellError;
 use crate::shell::Vec;
@@ -21,6 +21,7 @@ use alloc::string::String;
 use core::fmt::Write;
 use x86_64::instructions::interrupts;
 
+/// Struct representing the display for the shell.
 pub struct ShellDisplay {
     prompt: String,
     error_color: ColorCode,
@@ -31,6 +32,11 @@ pub struct ShellDisplay {
 }
 
 impl ShellDisplay {
+    /// Creates a new `ShellDisplay`.
+    ///
+    /// # Returns
+    ///
+    /// A new instance of `ShellDisplay`.
     pub fn new() -> Self {
         Self {
             prompt: String::from("> "),
@@ -42,10 +48,20 @@ impl ShellDisplay {
         }
     }
 
+    /// Sets the prompt string for the shell display.
+    ///
+    /// # Arguments
+    ///
+    /// * `prompt` - A `String` representing the new prompt.
     pub fn set_prompt(&mut self, prompt: String) {
         self.prompt = prompt;
     }
 
+    /// Renders the prompt on the shell display.
+    ///
+    /// # Returns
+    ///
+    /// The current cursor position after rendering the prompt.
     pub fn render_prompt(&self) -> usize {
         interrupts::without_interrupts(|| {
             let mut writer = WRITER.lock();
@@ -64,6 +80,7 @@ impl ShellDisplay {
         })
     }
 
+    /// Clears the screen of the shell display.
     pub fn clear_screen(&self) {
         use x86_64::instructions::interrupts;
         interrupts::without_interrupts(|| {
@@ -75,6 +92,7 @@ impl ShellDisplay {
         });
     }
 
+    /// Clears the current line of the shell display.
     pub fn clear_line(&self) {
         interrupts::without_interrupts(|| {
             let mut writer = WRITER.lock();
@@ -93,20 +111,40 @@ impl ShellDisplay {
         });
     }
 
+    /// Moves the cursor to the specified position.
+    ///
+    /// # Arguments
+    ///
+    /// * `position` - The position to move the cursor to.
     pub fn move_cursor(&self, position: usize) {
         if position < BUFFER_WIDTH {
             WRITER.lock().column_position = position;
         }
     }
 
+    /// Gets the current cursor position.
+    ///
+    /// # Returns
+    ///
+    /// The current cursor position.
     pub fn get_cursor_position(&self) -> usize {
         WRITER.lock().column_position
     }
 
+    /// Gets the current prompt string.
+    ///
+    /// # Returns
+    ///
+    /// A string slice representing the current prompt.
     pub fn get_prompt(&self) -> &str {
         &self.prompt
     }
 
+    /// Displays an error message on the shell display.
+    ///
+    /// # Arguments
+    ///
+    /// * `error` - A reference to a `ShellError` representing the error to display.
     pub fn display_error(&self, error: &ShellError) {
         use x86_64::instructions::interrupts;
         interrupts::without_interrupts(|| {
@@ -142,6 +180,12 @@ impl ShellDisplay {
         });
     }
 
+    /// Redraws the current line with the given content and cursor position.
+    ///
+    /// # Arguments
+    ///
+    /// * `content` - A slice of bytes representing the content to display.
+    /// * `cursor_pos` - The position of the cursor within the content.
     pub fn redraw_line(&self, content: &[u8], cursor_pos: usize) {
         interrupts::without_interrupts(|| {
             let mut writer = WRITER.lock();
