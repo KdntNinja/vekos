@@ -58,27 +58,23 @@ VEKOS is an experimental operating system written in Rust that focuses on verifi
 
 ## Building
 
+### Prerequisites
+
+- Rust nightly toolchain
+- `cargo-xbuild` for cross-compilation
+- QEMU for testing (optional)
+
+### Build Instructions
+
 ```bash
 # Clone this repository
 git clone https://github.com/JGiraldo29/vekos.git
 cd vekos
 
-# Add the rust-src component to the toolchain
-rustup component add rust-src
-
 # Build the kernel
 cargo build
-```
 
-## Running VEKOS
-
-Requires [QEMU](https://www.qemu.org/) and [bootimage](https://github.com/rust-osdev/bootimage) installed.
-
-```bash
-# Add the llvm-tools-preview component to the toolchain
-rustup component add llvm-tools-preview
-
-# Run VEKOS
+# Run in QEMU (if installed)
 cargo run
 ```
 

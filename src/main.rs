@@ -25,79 +25,77 @@
 #![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
+pub mod graphics_hal;
+pub mod page_table_cache;
 pub mod serial;
 pub mod signals;
 pub mod tty;
-pub mod graphics_hal;
-pub mod page_table_cache;
-use alloc::string::ToString;
-use x86_64::instructions::port::Port;
-use spin::Mutex;
-use crate::fs::FILESYSTEM;
 use crate::fs::FileSystem;
+use crate::fs::FILESYSTEM;
+use crate::vbe::VbeDriver;
 use crate::verification::VERIFICATION_REGISTRY;
 use alloc::format;
-use lazy_static::lazy_static;
-use crate::vbe::VbeDriver;
-pub use verification::{Hash, OperationProof, Verifiable, VerificationError};
-use core::panic::PanicInfo;
+use alloc::string::String;
+use boot_splash::{BootMessageType, BootSplash};
 use bootloader::{bootinfo::BootInfo, entry_point};
-use x86_64::VirtAddr;
-pub use shell::Shell;
+use core::panic::PanicInfo;
+use lazy_static::lazy_static;
 pub use operation_proofs::*;
-use boot_splash::{BootSplash, BootMessageType};
+pub use shell::Shell;
+use spin::Mutex;
+pub use verification::{Hash, OperationProof, Verifiable, VerificationError};
+use x86_64::instructions::port::Port;
+use x86_64::VirtAddr;
 
-use core::sync::atomic::Ordering;
-use boot_verification::{BOOT_VERIFICATION, BootStage};
 use crate::time::SYSTEM_TIME;
+use boot_verification::{BootStage, BOOT_VERIFICATION};
+use core::sync::atomic::Ordering;
 
-mod verification;
 mod allocator;
-pub mod crypto;
-mod vkfs;
-mod vbe;
-pub mod syscall;
-mod boot_splash;
-pub mod hash_chain;
-pub mod elf;
-pub mod merkle_tree;
-pub mod operation_proofs;
-pub mod proof_storage;
-pub mod buffer_manager;
-pub mod inode_cache;
-pub mod shell;
-pub mod hash;
-pub mod page_table;
-pub mod framebuffer;
 pub mod block_cache;
-mod swap;
+mod boot_splash;
 mod boot_verification;
-mod tsc;
 mod buddy_allocator;
+pub mod buffer_manager;
+pub mod crypto;
+pub mod elf;
+pub mod framebuffer;
 mod fs;
-mod vga_buffer;
 mod gdt;
+pub mod hash;
+pub mod hash_chain;
+pub mod inode_cache;
 mod interrupts;
 mod memory;
-mod process;
-mod scheduler;
-mod time;
+pub mod merkle_tree;
+pub mod operation_proofs;
+pub mod page_table;
 mod priority;
+mod process;
+pub mod proof_storage;
+mod scheduler;
+pub mod shell;
+mod swap;
+pub mod syscall;
+mod time;
+mod tsc;
+mod vbe;
+mod verification;
+mod vga_buffer;
+mod vkfs;
 
 pub const PAGE_SIZE: usize = 4096;
 pub const MAX_ORDER: usize = 11;
 pub const DEMAND_PAGE_ENABLED: bool = true;
 
 use crate::{
-    allocator::{ALLOCATOR, init_heap},
+    allocator::{init_heap, ALLOCATOR},
     memory::MemoryManager,
     process::Process,
     scheduler::Scheduler,
 };
 
-
 entry_point!(kernel_main);
-
 
 static MEMORY_MANAGER: Mutex<Option<MemoryManager>> = Mutex::new(None);
 const LARGE_PAGE_THRESHOLD: usize = 512;
@@ -115,10 +113,8 @@ lazy_static! {
 }
 
 pub const PALETTE_COLORS: [u32; 16] = [
-    0xFF000000, 0xFFFF0000, 0xFF00FF00, 0xFF0000FF,
-    0xFFFFFF00, 0xFFFF00FF, 0xFF00FFFF, 0xFFFFFFFF,
-    0xFF808080, 0xFF800000, 0xFF008000, 0xFF000080,
-    0xFF808000, 0xFF800080, 0xFF008080, 0xFFC0C0C0,
+    0xFF000000, 0xFFFF0000, 0xFF00FF00, 0xFF0000FF, 0xFFFFFF00, 0xFFFF00FF, 0xFF00FFFF, 0xFFFFFFFF,
+    0xFF808080, 0xFF800000, 0xFF008000, 0xFF000080, 0xFF808000, 0xFF800080, 0xFF008080, 0xFFC0C0C0,
 ];
 
 pub struct DrawingState {
@@ -142,37 +138,39 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     BootSplash::print_boot_message("Starting VEKOS boot sequence...", BootMessageType::Info);
     let mut boot_verifier = BOOT_VERIFICATION.lock();
     boot_verifier.start_boot();
-    
-    BootSplash::print_boot_message("Initializing Global Descriptor Table...", BootMessageType::Info);
+
+    BootSplash::print_boot_message(
+        "Initializing Global Descriptor Table...",
+        BootMessageType::Info,
+    );
     gdt::init();
     BootSplash::print_boot_message("GDT initialization complete", BootMessageType::Success);
-    
+
     BootSplash::print_boot_message("Initializing memory management...", BootMessageType::Info);
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
     let mut memory_manager = unsafe { MemoryManager::new(phys_mem_offset, &boot_info.memory_map) };
     BootSplash::print_boot_message("Memory management initialized", BootMessageType::Success);
-    
-    
+
     BootSplash::print_boot_message("Initializing heap...", BootMessageType::Info);
     let mut mapper = unsafe { memory_manager.get_mapper() };
     let mut frame_allocator = unsafe { memory_manager.get_frame_allocator() };
-    
+
     if let Err(e) = init_heap(&mut mapper, &mut frame_allocator) {
         BootSplash::print_boot_message("Heap initialization failed!", BootMessageType::Error);
         panic!("Failed to initialize heap: {:?}", e);
     }
     BootSplash::print_boot_message("Heap initialization complete", BootMessageType::Success);
-    
+
     {
         let mut mm_lock = MEMORY_MANAGER.lock();
         *mm_lock = Some(memory_manager);
     }
-    
+
     match boot_verifier.verify_stage_vmk(BootStage::GDTLoaded) {
         Ok(proof) => {
             serial_println!("GDT verification successful, proof: {:?}", proof.op_id);
             VERIFICATION_REGISTRY.lock().register_proof(proof);
-        },
+        }
         Err(e) => panic!("GDT verification failed: {:?}", e),
     };
 
@@ -185,13 +183,13 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     match boot_verifier.verify_stage_vmk(BootStage::IDTLoaded) {
         Ok(proof) => {
             serial_println!("IDT verification proof generated: op_id={}", proof.op_id);
-        },
+        }
         Err(e) => {
             BootSplash::print_boot_message("IDT verification failed!", BootMessageType::Error);
             boot_verifier.log_error("IDT verification failed");
             panic!("IDT initialization failed with verification error: {:?}", e);
         }
-    }    
+    }
     BootSplash::print_boot_message("IDT initialization complete", BootMessageType::Success);
 
     serial_println!("Testing keyboard interrupt system...");
@@ -206,25 +204,34 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         Ok(proof) => {
             serial_println!("Memory initialization verification successful");
             VERIFICATION_REGISTRY.lock().register_proof(proof);
-        },
+        }
         Err(e) => panic!("Memory initialization verification failed: {:?}", e),
     };
     BootSplash::print_boot_message("Memory initialization complete", BootMessageType::Success);
 
     match boot_verifier.verify_stage_vmk(BootStage::HeapInitialized) {
         Ok(proof) => {
-            serial_println!("Heap initialization verification proof generated: op_id={}", proof.op_id);
-        },
+            serial_println!(
+                "Heap initialization verification proof generated: op_id={}",
+                proof.op_id
+            );
+        }
         Err(e) => {
             boot_verifier.log_error("Heap verification failed");
-            panic!("Heap initialization failed with verification error: {:?}", e);
+            panic!(
+                "Heap initialization failed with verification error: {:?}",
+                e
+            );
         }
     }
-    
+
     BootSplash::print_boot_message("Initializing scheduler...", BootMessageType::Info);
     *SCHEDULER.lock() = Some(Scheduler::new());
-    BootSplash::print_boot_message("Scheduler initialization complete", BootMessageType::Success);
-    
+    BootSplash::print_boot_message(
+        "Scheduler initialization complete",
+        BootMessageType::Success,
+    );
+
     BootSplash::print_boot_message("Initializing syscalls...", BootMessageType::Info);
     syscall::init();
     BootSplash::print_boot_message("Syscalls initialization complete", BootMessageType::Success);
@@ -246,8 +253,11 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     fs::init();
     let proof_storage = proof_storage::PROOF_STORAGE.lock();
     drop(proof_storage);
-    BootSplash::print_boot_message("Filesystem initialization complete", BootMessageType::Success);
-    
+    BootSplash::print_boot_message(
+        "Filesystem initialization complete",
+        BootMessageType::Success,
+    );
+
     BootSplash::print_boot_message("Creating initial process...", BootMessageType::Info);
     {
         let mut scheduler_lock = SCHEDULER.lock();
@@ -277,7 +287,6 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
     BootSplash::print_boot_message("Initial process complete", BootMessageType::Success);
 
-    serial_println!("Starting framebuffer initialization...");
     let framebuffer_info = framebuffer::FramebufferInfo {
         width: 800,
         height: 600,
@@ -302,11 +311,17 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
             Ok(fb) => {
                 serial_println!("Framebuffer mapping was successful");
                 FRAMEBUFFER.lock().replace(fb);
-                BootSplash::print_boot_message("Framebuffer initialization complete", BootMessageType::Success);
-            },
+                BootSplash::print_boot_message(
+                    "Framebuffer initialization complete",
+                    BootMessageType::Success,
+                );
+            }
             Err(e) => {
                 serial_println!("Failed to initialize framebuffer: {:?}", e);
-                BootSplash::print_boot_message("Framebuffer initialization failed!", BootMessageType::Error);
+                BootSplash::print_boot_message(
+                    "Framebuffer initialization failed!",
+                    BootMessageType::Error,
+                );
             }
         }
     } else {
@@ -336,9 +351,15 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     };
     let mut graphics = graphics_hal::GraphicsHAL::new(graphics_config);
     if let Err(_) = graphics.init_double_buffering() {
-        BootSplash::print_boot_message("Graphics HAL initialization failed!", BootMessageType::Error);
+        BootSplash::print_boot_message(
+            "Graphics HAL initialization failed!",
+            BootMessageType::Error,
+        );
     } else {
-        BootSplash::print_boot_message("Graphics HAL initialization complete", BootMessageType::Success);
+        BootSplash::print_boot_message(
+            "Graphics HAL initialization complete",
+            BootMessageType::Success,
+        );
     }
 
     serial_println!("Starting VBE initialization...");
@@ -351,37 +372,58 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     BootSplash::print_boot_message("VEKOS initialization complete", BootMessageType::Success);
 
-    serial_println!("Boot sequence completed in {} TSC cycles", boot_verifier.get_boot_time());
+    serial_println!(
+        "Boot sequence completed in {} TSC cycles",
+        boot_verifier.get_boot_time()
+    );
     match boot_verifier.verify_stage_vmk(BootStage::Complete) {
         Ok(proof) => {
-            serial_println!("Final boot verification proof generated: op_id={}", proof.op_id);
-            serial_println!("Boot verification chain complete with {} verified stages", 
-                boot_verifier.stage_timestamps.iter().filter(|&&x| x.is_some()).count());
-        },
+            serial_println!(
+                "Final boot verification proof generated: op_id={}",
+                proof.op_id
+            );
+            serial_println!(
+                "Boot verification chain complete with {} verified stages",
+                boot_verifier
+                    .stage_timestamps
+                    .iter()
+                    .filter(|&&x| x.is_some())
+                    .count()
+            );
+        }
         Err(e) => {
             boot_verifier.log_error("Final boot verification failed");
             panic!("Final boot verification failed with error: {:?}", e);
         }
     }
 
-    BootSplash::print_boot_message("Creating initial userspace program...", BootMessageType::Info);
-    let mut mm_lock = MEMORY_MANAGER.lock();
-    if let Some(mm) = mm_lock.as_mut() {
-       match Process::new(mm) {
-           Ok(mut init_process) => {
-               init_process.current_dir = "/".to_string();
-               serial_println!("Loading VETests program...");
-               if let Ok(program_data) = FILESYSTEM.lock().read_file("/programs/VETests") {
-                   if let Err(e) = init_process.load_program(&program_data, mm) {
-                       serial_println!("Failed to load program: {:?}", e);
-                   } else {
-                       BootSplash::print_boot_message("Userspace initialization complete", BootMessageType::Success);
-                       init_process.switch_to_user_mode();
-                   }
-               }
-           },
-           Err(e) => serial_println!("Failed to create process: {:?}", e)
-       }
+    // Optional: userspace startup.
+    // let mut mm_lock = MEMORY_MANAGER.lock();
+    // if let Some(mm) = mm_lock.as_mut() {
+    //    match Process::new(mm) {
+    //        Ok(mut init_process) => {
+    //            init_process.current_dir = String::from("/");
+    //            serial_println!("Loading VETests program...");
+    //            if let Ok(program_data) = FILESYSTEM.lock().read_file("/programs/VETests") {
+    //                if let Err(e) = init_process.load_program(&program_data, mm) {
+    //                    serial_println!("Failed to load program: {:?}", e);
+    //                } else {
+    //                    init_process.switch_to_user_mode();
+    //                }
+    //            }
+    //        },
+    //        Err(e) => serial_println!("Failed to create process: {:?}", e)
+    //    }
+    // }
+
+    if let Ok(mut shell) = shell::Shell::new() {
+        if let Err(e) = shell.init() {
+            serial_println!("Failed to initialize shell: {:?}", e);
+        } else {
+            if let Err(e) = shell.run() {
+                serial_println!("Shell exited with error: {:?}", e);
+            }
+        }
     }
 
     let mut last_schedule = 0;
@@ -398,18 +440,18 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
 }
 
-
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
-    serial_println!("Kernel panic during boot stage {:?}", 
-        BOOT_VERIFICATION.lock().current_stage);
+    serial_println!(
+        "Kernel panic during boot stage {:?}",
+        BOOT_VERIFICATION.lock().current_stage
+    );
     serial_println!("Panic info: {}", info);
-    
-    
+
     let verifier = BOOT_VERIFICATION.lock();
     let errors = verifier.errors.lock();
     let error_count = verifier.error_count.load(Ordering::SeqCst) as usize;
-    
+
     if error_count > 0 {
         serial_println!("Boot sequence errors:");
         for i in 0..error_count.min(32) {
@@ -418,13 +460,11 @@ fn panic(info: &PanicInfo) -> ! {
             }
         }
     }
-    
-    
+
     fs::cleanup();
-    
+
     loop {}
 }
-
 
 #[cfg(test)]
 fn test_runner(tests: &[&dyn Fn()]) {
@@ -438,12 +478,24 @@ fn test_runner(tests: &[&dyn Fn()]) {
 #[cfg(test)]
 fn run_memory_tests() -> TestResult {
     use tests::memory::heap_tests;
-    
+
     let tests = [
-        TestCase::new("heap_simple_allocation", heap_tests::test_heap_simple_allocation),
-        TestCase::new("heap_large_allocation", heap_tests::test_heap_large_allocation),
-        TestCase::new("heap_multiple_allocations", heap_tests::test_heap_multiple_allocations),
-        TestCase::new("heap_fragmentation_resistance", heap_tests::test_heap_fragmentation_resistance),
+        TestCase::new(
+            "heap_simple_allocation",
+            heap_tests::test_heap_simple_allocation,
+        ),
+        TestCase::new(
+            "heap_large_allocation",
+            heap_tests::test_heap_large_allocation,
+        ),
+        TestCase::new(
+            "heap_multiple_allocations",
+            heap_tests::test_heap_multiple_allocations,
+        ),
+        TestCase::new(
+            "heap_fragmentation_resistance",
+            heap_tests::test_heap_fragmentation_resistance,
+        ),
         TestCase::new("heap_alignment", heap_tests::test_heap_alignment),
     ];
 

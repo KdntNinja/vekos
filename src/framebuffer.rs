@@ -14,21 +14,21 @@
 * limitations under the License.
 */
 
-use core::sync::atomic::{AtomicU64, Ordering};
-use x86_64::VirtAddr;
-use alloc::vec::Vec;
-use crate::serial_println;
-use x86_64::structures::paging::PageTableFlags;
-use x86_64::instructions::port::Port;
 use crate::memory::{MemoryError, MemoryManager};
-use alloc::vec;
-use spin::Mutex;
-use core::sync::atomic::AtomicBool;
+use crate::serial_println;
 use crate::{
-    verification::{Hash, OperationProof, Verifiable, VerificationError},
     hash,
+    verification::{Hash, OperationProof, Verifiable, VerificationError},
 };
- 
+use alloc::vec;
+use alloc::vec::Vec;
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::{AtomicU64, Ordering};
+use spin::Mutex;
+use x86_64::instructions::port::Port;
+use x86_64::structures::paging::PageTableFlags;
+use x86_64::VirtAddr;
+
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct FramebufferInfo {
@@ -70,14 +70,14 @@ impl Framebuffer {
     pub fn new(
         mut info: FramebufferInfo,
         physical_buffer: u64,
-        memory_manager: &mut MemoryManager
+        memory_manager: &mut MemoryManager,
     ) -> Result<Self, MemoryError> {
         let size = (info.pitch as usize * info.height as usize) as usize;
-        let pages = (size + 4095) / 4096; 
+        let pages = (size + 4095) / 4096;
         let buffer = VirtAddr::new(0xfd000000);
 
-        let flags = PageTableFlags::PRESENT 
-            | PageTableFlags::WRITABLE 
+        let flags = PageTableFlags::PRESENT
+            | PageTableFlags::WRITABLE
             | PageTableFlags::NO_CACHE
             | PageTableFlags::WRITE_THROUGH;
 
@@ -94,7 +94,7 @@ impl Framebuffer {
                     buffer,
                     size,
                     state_hash: AtomicU64::new(0),
-                    double_buffer: None, 
+                    double_buffer: None,
                     swap_in_progress: AtomicBool::new(false),
                     front_buffer_hash: AtomicU64::new(0),
                     back_buffer_hash: AtomicU64::new(0),
@@ -108,32 +108,36 @@ impl Framebuffer {
                     vsync_occurred: AtomicBool::new(false),
                 })
             } else {
-
                 const CHUNK_SIZE: usize = 64;
                 for chunk_start in (0..pages).step_by(CHUNK_SIZE) {
                     let chunk_pages = core::cmp::min(CHUNK_SIZE, pages - chunk_start);
-                    
+
                     for i in 0..chunk_pages {
                         let page_idx = chunk_start + i;
                         let phys_addr = physical_buffer + ((pages + page_idx) * 4096) as u64;
                         let page = x86_64::structures::paging::Page::containing_address(
-                            buffer2_addr + (page_idx * 4096) as u64
+                            buffer2_addr + (page_idx * 4096) as u64,
                         );
                         let frame = x86_64::structures::paging::PhysFrame::containing_address(
-                            x86_64::PhysAddr::new(phys_addr)
+                            x86_64::PhysAddr::new(phys_addr),
                         );
-                        
+
                         unsafe {
                             match memory_manager.map_page(page, frame, flags) {
                                 Ok(_) => continue,
                                 Err(e) => {
-                                    serial_println!("Failed to map page at index {}: {:?}", page_idx, e);
+                                    serial_println!(
+                                        "Failed to map page at index {}: {:?}",
+                                        page_idx,
+                                        e
+                                    );
                                     mapping_succeeded = false;
 
                                     for j in 0..page_idx {
-                                        let cleanup_page = x86_64::structures::paging::Page::containing_address(
-                                            buffer2_addr + (j * 4096) as u64
-                                        );
+                                        let cleanup_page =
+                                            x86_64::structures::paging::Page::containing_address(
+                                                buffer2_addr + (j * 4096) as u64,
+                                            );
                                         if let Err(e) = memory_manager.unmap_page(cleanup_page) {
                                             serial_println!("Warning: Failed to unmap page during cleanup: {:?}", e);
                                         }
@@ -143,12 +147,12 @@ impl Framebuffer {
                             }
                         }
                     }
-                    
+
                     if !mapping_succeeded {
                         break;
                     }
                 }
-    
+
                 if mapping_succeeded {
                     unsafe {
                         x86_64::instructions::tlb::flush_all();
@@ -172,7 +176,9 @@ impl Framebuffer {
                         vsync_occurred: AtomicBool::new(false),
                     })
                 } else {
-                    serial_println!("Warning: Failed to map second framebuffer, falling back to single buffer");
+                    serial_println!(
+                        "Warning: Failed to map second framebuffer, falling back to single buffer"
+                    );
                     info.page_flip_supported = false;
                     Ok(Framebuffer {
                         info,
@@ -214,7 +220,7 @@ impl Framebuffer {
                 vsync_occurred: AtomicBool::new(false),
             })
         };
-    
+
         result_buffer
     }
 
@@ -224,7 +230,7 @@ impl Framebuffer {
         if !self.check_buffer_alignment(VirtAddr::new(self.buffer.as_u64()), buffer_size) {
             return Err("Buffer alignment check failed");
         }
-        
+
         self.double_buffer = Some(vec![0; buffer_size]);
         Ok(())
     }
@@ -244,28 +250,28 @@ impl Framebuffer {
             serial_println!("Error: Buffer address range overflow");
             return false;
         }
-    
+
         true
     }
-    
+
     pub fn handle_vsync(&mut self) {
         self.vsync_occurred.store(true, Ordering::SeqCst);
         if self.sync_pending.load(Ordering::SeqCst) {
             self.sync_pending.store(false, Ordering::SeqCst);
         }
     }
-    
+
     pub fn wait_for_vsync(&self) -> Result<(), VerificationError> {
         if !self.vsync_enabled.load(Ordering::SeqCst) {
             return Ok(());
         }
-    
+
         self.vsync_occurred.store(false, Ordering::SeqCst);
 
         while !self.vsync_occurred.load(Ordering::SeqCst) {
             core::hint::spin_loop();
         }
-        
+
         Ok(())
     }
 
@@ -273,7 +279,7 @@ impl Framebuffer {
         if x >= self.info.width || y >= self.info.height {
             return Err("Pixel coordinates out of bounds");
         }
-    
+
         let offset = (y * self.info.pitch + x * (self.info.bpp as u32 / 8)) as usize;
         let current_buffer = self.get_active_buffer();
         let draw_buffer = if current_buffer == self.page1_buffer {
@@ -281,7 +287,7 @@ impl Framebuffer {
         } else {
             self.page1_buffer
         };
-    
+
         if offset + 3 < self.size {
             unsafe {
                 let ptr = (draw_buffer + offset).as_mut_ptr();
@@ -300,51 +306,49 @@ impl Framebuffer {
         if self.swap_in_progress.load(Ordering::SeqCst) {
             return Err(VerificationError::InvalidState);
         }
-    
-        let double_buffer = self.double_buffer.as_ref()
+
+        let double_buffer = self
+            .double_buffer
+            .as_ref()
             .ok_or(VerificationError::InvalidState)?;
 
         self.swap_in_progress.store(true, Ordering::SeqCst);
 
         let back_buffer_hash = hash::hash_memory(
             VirtAddr::new(double_buffer.as_ptr() as u64),
-            double_buffer.len()
+            double_buffer.len(),
         );
 
-        let front_buffer_hash = hash::hash_memory(
-            self.buffer,
-            self.size
-        );
+        let front_buffer_hash = hash::hash_memory(self.buffer, self.size);
 
-        self.back_buffer_hash.store(back_buffer_hash.0, Ordering::SeqCst);
-        self.front_buffer_hash.store(front_buffer_hash.0, Ordering::SeqCst);
+        self.back_buffer_hash
+            .store(back_buffer_hash.0, Ordering::SeqCst);
+        self.front_buffer_hash
+            .store(front_buffer_hash.0, Ordering::SeqCst);
 
         unsafe {
             core::ptr::copy_nonoverlapping(
                 double_buffer.as_ptr(),
                 self.buffer.as_mut_ptr(),
-                double_buffer.len()
+                double_buffer.len(),
             );
         }
 
-        let new_front_hash = hash::hash_memory(
-            self.buffer,
-            self.size
-        );
-    
+        let new_front_hash = hash::hash_memory(self.buffer, self.size);
+
         if new_front_hash.0 != back_buffer_hash.0 {
             unsafe {
                 let mut prev_buffer = vec![0u8; self.size];
                 core::ptr::copy_nonoverlapping(
                     self.buffer.as_ptr(),
                     prev_buffer.as_mut_ptr(),
-                    self.size
+                    self.size,
                 );
 
                 core::ptr::copy_nonoverlapping(
                     prev_buffer.as_ptr(),
                     self.buffer.as_mut_ptr(),
-                    self.size
+                    self.size,
                 );
             }
             self.swap_in_progress.store(false, Ordering::SeqCst);
@@ -355,7 +359,7 @@ impl Framebuffer {
         self.state_hash.store(new_state.0, Ordering::SeqCst);
 
         self.swap_in_progress.store(false, Ordering::SeqCst);
-    
+
         Ok(new_state)
     }
 
@@ -363,13 +367,13 @@ impl Framebuffer {
         if !self.info.page_flip_supported {
             return Err(VerificationError::InvalidOperation);
         }
-    
+
         if self.flip_in_progress.load(Ordering::SeqCst) {
             return Err(VerificationError::InvalidState);
         }
-    
+
         self.flip_in_progress.store(true, Ordering::SeqCst);
-    
+
         self.wait_for_vsync()?;
 
         let current_buffer = VirtAddr::new(self.active_buffer.load(Ordering::SeqCst));
@@ -392,10 +396,11 @@ impl Framebuffer {
             Port::new(0x3D5).write(offset as u8);
         }
 
-        self.active_buffer.store(next_buffer.as_u64(), Ordering::SeqCst);
+        self.active_buffer
+            .store(next_buffer.as_u64(), Ordering::SeqCst);
         self.state_hash.store(next_hash.0, Ordering::SeqCst);
         self.flip_in_progress.store(false, Ordering::SeqCst);
-    
+
         Ok(next_hash)
     }
 
@@ -406,43 +411,48 @@ impl Framebuffer {
     pub fn get_front_buffer_hash(&self) -> Hash {
         Hash(self.front_buffer_hash.load(Ordering::SeqCst))
     }
-    
+
     pub fn get_back_buffer_hash(&self) -> Hash {
         Hash(self.back_buffer_hash.load(Ordering::SeqCst))
     }
-    
+
     pub fn is_swap_in_progress(&self) -> bool {
         self.swap_in_progress.load(Ordering::SeqCst)
     }
 
-    pub fn draw_pixel_verified(&mut self, x: u32, y: u32, color: u32) -> Result<Hash, VerificationError> {
+    pub fn draw_pixel_verified(
+        &mut self,
+        x: u32,
+        y: u32,
+        color: u32,
+    ) -> Result<Hash, VerificationError> {
         if let Err(e) = self.write_pixel(x, y, color) {
             return Err(VerificationError::OperationFailed);
         }
 
         let offset = (y * self.info.pitch + x * (self.info.bpp as u32 / 8)) as usize;
-        let pixel_data = unsafe {
-            core::slice::from_raw_parts(
-                (self.buffer + offset).as_ptr(),
-                4
-            )
-        };
+        let pixel_data = unsafe { core::slice::from_raw_parts((self.buffer + offset).as_ptr(), 4) };
 
         let pixel_hash = unsafe {
             hash::hash_memory(
                 VirtAddr::new(pixel_data.as_ptr() as *const () as u64),
-                pixel_data.len()
+                pixel_data.len(),
             )
         };
 
         Ok(pixel_hash)
     }
 
-    pub fn fill_rect_verified(&mut self, x: u32, y: u32, width: u32, height: u32, color: u32) 
-        -> Result<Hash, VerificationError> 
-    {
+    pub fn fill_rect_verified(
+        &mut self,
+        x: u32,
+        y: u32,
+        width: u32,
+        height: u32,
+        color: u32,
+    ) -> Result<Hash, VerificationError> {
         let mut hashes = Vec::new();
-        
+
         for cy in y..y.saturating_add(height) {
             for cx in x..x.saturating_add(width) {
                 if let Ok(hash) = self.draw_pixel_verified(cx, cy, color) {
@@ -469,22 +479,25 @@ impl Framebuffer {
 }
 
 impl Verifiable for Framebuffer {
-    fn generate_proof(&self, operation: crate::verification::Operation) -> Result<OperationProof, VerificationError> {
+    fn generate_proof(
+        &self,
+        operation: crate::verification::Operation,
+    ) -> Result<OperationProof, VerificationError> {
         match operation {
             crate::verification::Operation::Memory { address, size, .. } => {
                 let prev_state = self.state_hash();
-                
+
                 let buffer_hash = if let Some(ref double_buffer) = self.double_buffer {
                     hash::hash_memory(
                         VirtAddr::new(double_buffer.as_ptr() as u64),
-                        double_buffer.len()
+                        double_buffer.len(),
                     )
                 } else {
                     return Err(VerificationError::InvalidState);
                 };
-                
+
                 let new_state = Hash(prev_state.0 ^ buffer_hash.0);
-                
+
                 Ok(OperationProof {
                     op_id: crate::tsc::read_tsc(),
                     prev_state,
@@ -495,11 +508,11 @@ impl Verifiable for Framebuffer {
                             address,
                             size,
                             frame_hash: buffer_hash,
-                        }
+                        },
                     ),
                     signature: [0; 64],
                 })
-            },
+            }
             _ => Err(VerificationError::InvalidOperation),
         }
     }
