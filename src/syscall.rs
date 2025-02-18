@@ -16,33 +16,20 @@
 
 use x86_64::VirtAddr;
 
-use crate::gdt::GDT;
 use crate::serial_println;
 use crate::tty;
-use crate::vga_buffer::Color;
-use crate::vga_buffer::ColorCode;
-use crate::vga_buffer::WRITER;
 use crate::MEMORY_MANAGER;
 use alloc::vec::Vec;
 use core::arch::asm;
 use core::arch::naked_asm;
-use core::slice;
 use core::sync::atomic::AtomicU64;
 use lazy_static::lazy_static;
 use spin::Mutex;
 use x86_64::instructions::interrupts;
-use x86_64::registers::model_specific::Efer;
-use x86_64::registers::model_specific::LStar;
-use x86_64::registers::model_specific::Msr;
-use x86_64::registers::model_specific::SFMask;
-use x86_64::registers::model_specific::Star;
-use x86_64::registers::rflags::RFlags;
 use x86_64::structures::gdt::SegmentSelector;
 use x86_64::structures::paging::FrameAllocator;
 use x86_64::structures::paging::Page;
 use x86_64::structures::paging::PageTableFlags;
-use x86_64::structures::paging::PhysFrame;
-use x86_64::PhysAddr;
 
 pub static TOP_OF_KERNEL_STACK: AtomicU64 = AtomicU64::new(0);
 static USER_STACK_SCRATCH: AtomicU64 = AtomicU64::new(0);
@@ -197,9 +184,9 @@ fn sys_read(fd: u64, buf: u64, count: u64, _: u64, _: u64, _: u64) -> u64 {
             return bytes_read as u64;
         }
 
-        x86_64::instructions::interrupts::enable();
+        interrupts::enable();
         core::hint::spin_loop();
-        x86_64::instructions::interrupts::disable();
+        interrupts::disable();
     }
 }
 

@@ -26,11 +26,9 @@ use x86_64::{
 };
 
 use crate::elf;
-use crate::gdt::GDT;
 use crate::hash;
 use crate::memory::PAGE_REF_COUNTS;
 use crate::memory::SWAPPED_PAGES;
-use crate::print;
 use crate::println;
 use crate::signals;
 use crate::syscall::TOP_OF_KERNEL_STACK;
@@ -473,8 +471,6 @@ impl Process {
     }
 
     pub fn switch_to_user_mode(&mut self) {
-        use x86_64::instructions::segmentation::{Segment, CS, SS};
-
         serial_println!("\nProcess Switch Debug:");
         serial_println!("CPU State Debug:");
         serial_println!("RIP: {:#x}", self.context.regs.rip);

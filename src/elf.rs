@@ -17,7 +17,6 @@
 use crate::memory::MemoryError;
 use crate::memory::MemoryManager;
 use crate::serial_println;
-use alloc::vec::Vec;
 use core::mem::size_of;
 use x86_64::structures::paging::FrameAllocator;
 use x86_64::structures::paging::Size4KiB;

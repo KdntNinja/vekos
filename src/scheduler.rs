@@ -14,8 +14,8 @@
 * limitations under the License.
 */
 
+use crate::println;
 use crate::process::{Process, ProcessId, ProcessState, PROCESS_LIST};
-use crate::{print, println};
 use x86_64::{registers::control::Cr3, VirtAddr};
 
 use crate::priority::PriorityScheduler;
