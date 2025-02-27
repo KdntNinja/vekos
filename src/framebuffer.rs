@@ -424,30 +424,30 @@ fn verify_memory_layout() {
     }
 }
 
-fn test_solid_color() {
-    if let Some(fb) = &mut *FRAMEBUFFER.lock() {
-        serial_println!("Starting circle test for {}x{} framebuffer...", fb.width(), fb.height());
-        verify_crtc_offset();
-        verify_memory_layout();
-        unsafe {
-            let mut port = Port::<u8>::new(VGA_INSTAT_READ);
-            port.read();
-            while port.read() & 0x08 == 0 {}
-        }
-        
-        fb.double_buffering = true;
-        
-        fb.clear(WHITE); 
-        let center_x = fb.width() / 2;
-        let center_y = fb.height() / 2;
-        let radius = 50;
-        fb.draw_circle(center_x, center_y, radius, RED);
-        
-        fb.swap_buffers();
-        fb.double_buffering = false;
-        serial_println!("Circle test completed");
-    }
-}
+// fn test_solid_color() {
+//     if let Some(fb) = &mut *FRAMEBUFFER.lock() {
+//         serial_println!("Starting circle test for {}x{} framebuffer...", fb.width(), fb.height());
+//         verify_crtc_offset();
+//         verify_memory_layout();
+//         unsafe {
+//             let mut port = Port::<u8>::new(VGA_INSTAT_READ);
+//             port.read();
+//             while port.read() & 0x08 == 0 {}
+//         }
+//        
+//         fb.double_buffering = true;
+//        
+//         fb.clear(WHITE); 
+//         let center_x = fb.width() / 2;
+//         let center_y = fb.height() / 2;
+//         let radius = 50;
+//         fb.draw_circle(center_x, center_y, radius, RED);
+//         
+//         fb.swap_buffers();
+//         fb.double_buffering = false;
+//         serial_println!("Circle test completed");
+//     }
+// }
 
 const MODE_13H_MISC: u8 = 0x63;
 
