@@ -397,6 +397,12 @@ pub struct Process {
     pub session_id: Option<SessionId>,
     pub context: ProcessContext,
     state_hash: AtomicU64,
+    pub cpu_usage_history: [u32; 8],
+    pub io_operations: u32,
+    pub memory_access_rate: u32,
+    pub context_switches: u32,
+    pub scheduler_decisions: [u8; 16],
+    pub ml_reward_history: [i32; 4],
 }
 
 impl Process {
@@ -447,6 +453,12 @@ impl Process {
             session_id: None,
             context: ProcessContext::new(),
             state_hash: AtomicU64::new(0),
+            cpu_usage_history: [0; 8],
+            io_operations: 0,
+            memory_access_rate: 0,
+            context_switches: 0,
+            scheduler_decisions: [0; 16],
+            ml_reward_history: [0; 4],
         };
 
         let initial_state = process.compute_process_state_hash();
@@ -473,6 +485,7 @@ impl Process {
         let user_rflags = self.context.regs.rflags;
         let user_rip = self.context.regs.rip;
         let user_rsp = self.context.regs.rsp;
+        let user_rflags_with_if = user_rflags | 0x200;
     
         unsafe {
             x86_64::instructions::interrupts::disable();
@@ -492,7 +505,7 @@ impl Process {
     
                 "sysretq",
                 in(reg) user_rip,
-                in(reg) user_rflags,
+                in(reg) user_rflags_with_if,
                 in(reg) user_rsp,
                 options(noreturn)
             );
@@ -561,6 +574,21 @@ impl Process {
                 allocation.size
             ));
         }
+        
+        state_components.push(hash::hash_memory(
+            VirtAddr::new(&self.cpu_usage_history as *const _ as u64),
+            core::mem::size_of::<[u32; 8]>()
+        ));
+        
+        state_components.push(hash::hash_memory(
+            VirtAddr::new(&self.scheduler_decisions as *const _ as u64),
+            core::mem::size_of::<[u8; 16]>()
+        ));
+        
+        state_components.push(hash::hash_memory(
+            VirtAddr::new(&self.ml_reward_history as *const _ as u64),
+            core::mem::size_of::<[i32; 4]>()
+        ));
         
         hash::combine_hashes(&state_components)
     }

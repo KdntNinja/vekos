@@ -745,6 +745,56 @@ impl FileSystem for InMemoryFs {
     }
 }
 
+pub fn print_directory_structure() {
+    serial_println!("======= FILESYSTEM DIRECTORY STRUCTURE =======");
+    let mut filesystem = FILESYSTEM.lock();
+    
+    fn print_directory_recursive(fs: &mut impl FileSystem, path: &str, depth: usize) {
+        let indent = "  ".repeat(depth);
+
+        serial_println!("{}{}/ (dir)", indent, path);
+
+        let entries = match fs.list_directory(path) {
+            Ok(entries) => entries,
+            Err(_) => {
+                serial_println!("{}  <Error reading directory>", indent);
+                return;
+            }
+        };
+        
+        for entry in entries {
+            let full_path = if path.ends_with('/') {
+                format!("{}{}", path, entry)
+            } else {
+                format!("{}/{}", path, entry)
+            };
+
+            match fs.stat(&full_path) {
+                Ok(stats) => {
+                    let perms = format!("r{}w{}x{}", 
+                        if stats.permissions.read { "+" } else { "-" },
+                        if stats.permissions.write { "+" } else { "-" },
+                        if stats.permissions.execute { "+" } else { "-" });
+                        
+                    if stats.is_directory {
+                        serial_println!("{}{}/ ({}) (dir)", indent, entry, perms);
+                        print_directory_recursive(fs, &full_path, depth + 1);
+                    } else {
+                        serial_println!("{}{}  ({}) (file, size: {})", 
+                            indent, entry, perms, stats.size);
+                    }
+                },
+                Err(_) => {
+                    serial_println!("{}{} <Error reading stats>", indent, entry);
+                }
+            }
+        }
+    }
+
+    print_directory_recursive(&mut *filesystem, "/", 0);
+    serial_println!("====== END FILESYSTEM STRUCTURE LISTING ======");
+}
+
 impl Verifiable for InMemoryFs {
     fn generate_proof(&self, operation: Operation) -> Result<OperationProof, VerificationError> {
         match operation {

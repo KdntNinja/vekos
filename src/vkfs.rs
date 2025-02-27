@@ -21,6 +21,7 @@ use crate::hash::hash_memory;
 use crate::time::Timestamp;
 use alloc::vec;
 use crate::Verifiable;
+use crate::key_store;
 use alloc::vec::Vec;
 use crate::merkle_tree::HashChainVerifier;
 use crate::proof_storage::PROOF_STORAGE;
@@ -472,14 +473,19 @@ impl Verifiable for Directory {
 impl Superblock {
     pub fn new(total_blocks: u64, total_inodes: u32) -> Self {
         serial_println!("Superblock: Starting initialization");
-    
-        
-        let verification_key = [0u8; 64]; 
-        
-        
+
+        let verification_key = match key_store::KEY_STORE.lock().get_verification_key() {
+            Ok(key) => key,
+            Err(e) => {
+                serial_println!("Warning: Could not get verification key: {}", e);
+                serial_println!("Using default (empty) key for now - verification will be limited");
+                [0u8; 64]
+            }
+        };
+
         let mut verifier = CRYPTO_VERIFIER.lock();
         verifier.set_verification_key(&verification_key);
-        drop(verifier); 
+        drop(verifier);
     
         let mut sb = Self {
             magic: VKFS_MAGIC,

@@ -23,6 +23,7 @@ use crate::{
 use x86_64::VirtAddr;
 use crate::verification::FSOpType;
 use crate::verification::ProofData;
+use alloc::vec::Vec;
 
 #[derive(Debug, Clone)]
 pub struct BlockOperationProof {
@@ -176,7 +177,46 @@ impl ProofVerifier for Superblock {
 }
 
 fn verify_signature(proof: &OperationProof) -> bool {
-    
-    
-    !proof.signature.iter().all(|&b| b == 0)
+    let mut verification_data = Vec::new();
+    verification_data.extend_from_slice(&proof.op_id.to_ne_bytes());
+    verification_data.extend_from_slice(&proof.prev_state.0.to_ne_bytes());
+    verification_data.extend_from_slice(&proof.new_state.0.to_ne_bytes());
+
+    match &proof.data {
+        ProofData::Memory(mem_proof) => {
+            verification_data.extend_from_slice(&[0]);
+            verification_data.extend_from_slice(&(mem_proof.address.as_u64().to_ne_bytes()));
+            verification_data.extend_from_slice(&(mem_proof.size.to_ne_bytes()));
+            verification_data.extend_from_slice(&(mem_proof.frame_hash.0.to_ne_bytes()));
+        },
+        ProofData::Filesystem(fs_proof) => {
+            verification_data.extend_from_slice(&[1]);
+            verification_data.extend_from_slice(fs_proof.path.as_bytes());
+            verification_data.extend_from_slice(&fs_proof.content_hash.0.to_ne_bytes());
+        },
+        ProofData::Process(proc_proof) => {
+            verification_data.extend_from_slice(&[2]);
+            verification_data.extend_from_slice(&proc_proof.pid.to_ne_bytes());
+            verification_data.extend_from_slice(&proc_proof.state_hash.0.to_ne_bytes());
+        },
+        ProofData::Boot(boot_proof) => {
+            verification_data.extend_from_slice(&[3]);
+            verification_data.extend_from_slice(&boot_proof.stage_hash.0.to_ne_bytes());
+        },
+        ProofData::Tile(tile_proof) => {
+            verification_data.extend_from_slice(&[4]);
+            verification_data.extend_from_slice(&tile_proof.tile_id.to_ne_bytes());
+            verification_data.extend_from_slice(&(tile_proof.position.0.to_ne_bytes()));
+            verification_data.extend_from_slice(&(tile_proof.position.1.to_ne_bytes()));
+            verification_data.extend_from_slice(&tile_proof.tile_hash.0.to_ne_bytes());
+        },
+        ProofData::Generic { operation_type, data_hash } => {
+            verification_data.extend_from_slice(&[5]);
+            verification_data.extend_from_slice(operation_type.as_bytes());
+            verification_data.extend_from_slice(&data_hash.0.to_ne_bytes());
+        },
+    }
+
+    let verifier = crate::crypto::CRYPTO_VERIFIER.lock();
+    verifier.verify_signature(&verification_data, &proof.signature)
 }

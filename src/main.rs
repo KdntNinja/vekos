@@ -29,6 +29,7 @@ pub mod serial;
 pub mod signals;
 pub mod tty;
 pub mod page_table_cache;
+pub mod key_store;
 use x86_64::instructions::port::Port;
 use crate::framebuffer::FRAMEBUFFER;
 use spin::Mutex;
@@ -39,10 +40,12 @@ use crate::verification::VERIFICATION_REGISTRY;
 use embedded_graphics::pixelcolor::Rgb888;
 use alloc::format;
 use lazy_static::lazy_static;
+use crate::alloc::string::ToString;
 pub use verification::{Hash, OperationProof, Verifiable, VerificationError};
 use core::panic::PanicInfo;
 use bootloader::{bootinfo::BootInfo, entry_point};
 use x86_64::VirtAddr;
+use crate::process::PROCESS_LIST;
 pub use shell::Shell;
 pub use operation_proofs::*;
 use boot_splash::{BootSplash, BootMessageType};
@@ -71,6 +74,7 @@ pub mod page_table;
 pub mod block_cache;
 pub mod framebuffer;
 pub mod font;
+pub mod scheduler_ml;
 mod swap;
 mod boot_verification;
 mod tsc;
@@ -108,7 +112,6 @@ lazy_static! {
 }
 
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
-    // framebuffer::init();
     BootSplash::show_splash();
     BootSplash::print_boot_message("Starting VEKOS boot sequence...", BootMessageType::Info);
     let mut boot_verifier = BOOT_VERIFICATION.lock();
@@ -117,6 +120,8 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     BootSplash::print_boot_message("Initializing Global Descriptor Table...", BootMessageType::Info);
     gdt::init();
     BootSplash::print_boot_message("GDT initialization complete", BootMessageType::Success);
+
+    // framebuffer::init();
 
     BootSplash::print_boot_message("Initializing memory management...", BootMessageType::Info);
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
@@ -149,6 +154,19 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     BootSplash::print_boot_message("Initializing hash features...", BootMessageType::Info);
     hash::init();
     BootSplash::print_boot_message("Hash initialization complete", BootMessageType::Success);
+
+    BootSplash::print_boot_message("Initializing cryptographic features...", BootMessageType::Info);
+    crypto::init();
+    BootSplash::print_boot_message("Cryptographic initialization complete", BootMessageType::Success);
+
+    BootSplash::print_boot_message("Initializing early key management...", BootMessageType::Info);
+    if let Err(e) = key_store::KEY_STORE.lock().init_early_boot() {
+        BootSplash::print_boot_message("Early key management initialization failed!", BootMessageType::Error);
+        boot_verifier.log_error("Early key initialization failed");
+        serial_println!("Early key initialization error: {}", e);
+    } else {
+        BootSplash::print_boot_message("Early key management initialization complete", BootMessageType::Success);
+    }
 
     BootSplash::print_boot_message("Initializing IDT...", BootMessageType::Info);
     interrupts::init_idt();
@@ -217,7 +235,18 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let proof_storage = proof_storage::PROOF_STORAGE.lock();
     drop(proof_storage);
     BootSplash::print_boot_message("Filesystem initialization complete", BootMessageType::Success);
-    
+
+    BootSplash::print_boot_message("Completing key management initialization...", BootMessageType::Info);
+    if let Err(e) = key_store::init() {
+        BootSplash::print_boot_message("Key management persistence failed", BootMessageType::Warning);
+        serial_println!("Key persistence error: {}", e);
+    } else {
+        BootSplash::print_boot_message("Key management fully initialized", BootMessageType::Success);
+    }
+
+    BootSplash::print_boot_message("Verifying filesystem structure...", BootMessageType::Info);
+    fs::print_directory_structure();
+
     BootSplash::print_boot_message("Creating initial process...", BootMessageType::Info);
     {
         let mut scheduler_lock = SCHEDULER.lock();
@@ -262,12 +291,28 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         }
     }
 
+    BootSplash::print_boot_message("Verifying security subsystem...", BootMessageType::Info);
+    let verification_result = VERIFICATION_REGISTRY.lock().test_verification_chain();
+    match verification_result {
+        Ok(true) => {
+            BootSplash::print_boot_message("Security subsystem verification successful", BootMessageType::Success);
+        },
+        Ok(false) => {
+            BootSplash::print_boot_message("Security subsystem verification FAILED!", BootMessageType::Error);
+            serial_println!("WARNING: Security system verification failed, proceeding with limited trust");
+        },
+        Err(e) => {
+            BootSplash::print_boot_message("Security subsystem verification error", BootMessageType::Error);
+            serial_println!("ERROR: Security system verification error: {:?}", e);
+        }
+    }
+
     BootSplash::print_boot_message("Creating initial userspace program...", BootMessageType::Info);
     let mut mm_lock = MEMORY_MANAGER.lock();
     if let Some(mm) = mm_lock.as_mut() {
        match Process::new(mm) {
         Ok(mut init_process) => {
-            init_process.current_dir = String::from("/");
+            init_process.current_dir = "/".to_string();
             serial_println!("Loading VETests program...");
 
             let program_data = {
@@ -280,6 +325,12 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
                     serial_println!("Failed to load program: {:?}", e);
                 } else {
                     BootSplash::print_boot_message("Userspace initialization complete", BootMessageType::Success);
+
+                    unsafe {
+                        serial_println!("VEKOS kernel with AI-enhanced scheduling is initialized");
+                        serial_println!("Switching to user mode, scheduling will continue via timer interrupts");
+                    }
+
                     init_process.switch_to_user_mode();
                 }
             }
@@ -288,16 +339,8 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
        }
     }
 
-    let mut last_schedule = 0;
+    serial_println!("VEKOS kernel entering idle state");
     loop {
-        let current_ticks = SYSTEM_TIME.ticks();
-        if current_ticks.saturating_sub(last_schedule) >= 10 {
-            if let Some(scheduler) = &mut *SCHEDULER.lock() {
-                serial_println!("Scheduling...");
-                scheduler.schedule();
-                last_schedule = current_ticks;
-            }
-        }
         x86_64::instructions::hlt();
     }
 }

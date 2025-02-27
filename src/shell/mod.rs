@@ -192,7 +192,7 @@ impl Shell {
             if let Some(mm) = memory_manager.as_mut() {
                 match Process::new(mm) {
                     Ok(mut init_process) => {
-                        init_process.current_dir = String::from("/");
+                         init_process.current_dir = "/".to_string();
                         process_list.add(init_process)
                             .map_err(|_| ShellError::InternalError)?;
                     },

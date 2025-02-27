@@ -15,7 +15,10 @@
 */
 
 use lazy_static::lazy_static;
+use crate::serial_println;
+use ed25519_compact::{Signature, PublicKey, Noise};
 use spin::Mutex;
+use crate::key_store;
 
 const ED25519_PUBLIC_KEY_LENGTH: usize = 32;
 const VKFS_KEY_LENGTH: usize = 64;
@@ -25,11 +28,20 @@ pub struct CryptoVerifier {
     verification_key: [u8; VKFS_KEY_LENGTH],
 }
 
-struct Sha512 {
-    state: [u64; 8],
-    buffer: [u8; 128],
-    length: usize,
+macro_rules! array_ref {
+    ($arr:expr, $offset:expr, $len:expr) => {{
+        {
+            #[inline]
+            unsafe fn as_array<T>(slice: &[T]) -> &[T; $len] {
+                &*(slice.as_ptr() as *const [T; $len])
+            }
+            let slice = &$arr[$offset..];
+            debug_assert!(slice.len() >= $len);
+            unsafe { as_array(slice) }
+        }
+    }};
 }
+
 
 impl CryptoVerifier {
     pub fn new(initial_key: [u8; VKFS_KEY_LENGTH]) -> Self {
@@ -38,254 +50,206 @@ impl CryptoVerifier {
         }
     }
 
-    fn edwards25519_add(&self, p: &[u8; 32], q: &[u8; 32], r: &mut [u8; 32]) {
-        let mut x1 = [0u8; 32];
-        let mut y1 = [0u8; 32];
-        let mut x2 = [0u8; 32];
-        let mut y2 = [0u8; 32];
-        
-        x1.copy_from_slice(&p[0..32]);
-        y1.copy_from_slice(&q[0..32]);
-        
-        for i in 0..32 {
-            x2[i] = x1[i] ^ q[i];
-            y2[i] = y1[i] ^ q[i];
-        }
-        
-        r.copy_from_slice(&x2);
-    }
-
-    fn edwards25519_scalar_mul(&self, k: &[u8; 32], p: &[u8; 32], q: &mut [u8; 32]) {
-        let mut accumulator = [0u8; 32];
-        let mut current = [0u8; 32];
-        current.copy_from_slice(p);
-        
-        for i in 0..8 {
-            for j in 0..8 {
-                if (k[i] >> j) & 1 == 1 {
-                    let mut temp = [0u8; 32];
-                    self.edwards25519_add(&accumulator, &current, &mut temp);
-                    accumulator.copy_from_slice(&temp);
-                }
-                let mut temp = [0u8; 32];
-                self.edwards25519_add(&current, &current, &mut temp);
-                current.copy_from_slice(&temp);
-            }
-        }
-        
-        q.copy_from_slice(&accumulator);
-    }
-
-    fn edwards25519_base_scalar_mul(&self, k: &[u8; 32], p: &mut [u8; 32]) {
-        let base_point = [
-            0x58, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-            0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-            0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-            0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66, 0x66,
-        ];
-        
-        self.edwards25519_scalar_mul(k, &base_point, p);
-    }
-
-    fn new_sha512(&self) -> Sha512 {
-        Sha512::new()
-    }
-
-    fn is_on_curve(&self, p: &[u8; 32]) -> bool {
-        !p.iter().all(|&b| b == 0)
-    }
-
-    fn reduce_scalar(&self, s: &mut [u8; 32]) {
-        const L: [u8; 32] = [
-            0xed, 0xd3, 0xf5, 0x5c, 0x1a, 0x63, 0x12, 0x58,
-            0xd6, 0x9c, 0xf7, 0xa2, 0xde, 0xf9, 0xde, 0x14,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10,
-        ];
-        
-        let mut carry: i16 = 0;
-        for i in 0..32 {
-            carry += s[i] as i16 - L[i] as i16;
-            s[i] = (carry & 0xff) as u8;
-            carry = carry.wrapping_shr(8);
-        }
-        
-        let mask = !(carry & 1) as u8;
-        for i in 0..32 {
-            s[i] &= mask;
-        }
-    }
-
-    fn point_add(&self, p: &[u8; 32], q: &[u8; 32]) -> [u8; 32] {
-        let mut r = [0u8; 32];
-        self.edwards25519_add(p, q, &mut r);
-        r
-    }
-
-    fn scalar_multiply(&self, k: &[u8; 32], p: &[u8; 32]) -> [u8; 32] {
-        let mut q = [0u8; 32];
-        self.edwards25519_scalar_mul(k, p, &mut q);
-        q
-    }
-
-    fn scalar_multiply_base(&self, k: &[u8; 32]) -> [u8; 32] {
-        let mut p = [0u8; 32];
-        self.edwards25519_base_scalar_mul(k, &mut p);
-        p
-    }
-
-    pub fn verify_signature(&self, data: &[u8], signature: &[u8; ED25519_SIGNATURE_LENGTH]) -> bool {
-        if signature.iter().all(|&b| b == 0) {
-            return false;
-        }
-
-        
-        if let Some(result) = self.try_hardware_verify(data, signature) {
-            return result;
-        }
-
-        
-        self.verify_signature_software(data, signature)
-    }
-    
     pub fn set_verification_key(&mut self, key: &[u8; VKFS_KEY_LENGTH]) {
         self.verification_key[..].copy_from_slice(key);
     }
 
-    fn try_hardware_verify(&self, data: &[u8], signature: &[u8; ED25519_SIGNATURE_LENGTH]) -> Option<bool> {
-        unsafe {
-            
-            let cpuid = core::arch::x86_64::__cpuid(7);
-            if (cpuid.ecx & (1 << 17)) == 0 {  
-                return None;
-            }
-            
-            let mut result: u64;
-            core::arch::asm!(
-                "mov rax, 0x0F",  
-                "mov rdx, {key}",
-                "mov rcx, {data}",
-                "mov r8, {sig}",
-                "mov r9, {len}",
-                "vzeroupper",
-                "sha256rnds2 xmm0, xmm1",
-                out("rax") result,
-                key = in(reg) self.verification_key.as_ptr(),
-                data = in(reg) data.as_ptr(),
-                sig = in(reg) signature.as_ptr(),
-                len = in(reg) data.len(),
-                options(nostack, preserves_flags)
-            );
-            
-            Some(result == 1)
-        }
-    }
+    pub fn verify_signature(&self, data: &[u8], signature: &[u8; ED25519_SIGNATURE_LENGTH]) -> bool {
+        serial_println!("Starting ED25519 signature verification");
+        serial_println!("Data length: {} bytes", data.len());
+        serial_println!("Signature: {:02x?}...", &signature[..4]);
 
-    fn verify_signature_software(&self, data: &[u8], signature: &[u8; ED25519_SIGNATURE_LENGTH]) -> bool {
         if signature.len() != ED25519_SIGNATURE_LENGTH {
+            serial_println!("Invalid signature length: {}", signature.len());
             return false;
         }
-    
-        let r_bytes = &signature[0..32];
-        let s_bytes = &signature[32..64];
 
-        let r = match self.decode_point(r_bytes) {
-            Some(r) => r,
-            None => return false,
+        let public_key_bytes = array_ref!(self.verification_key, 0, ED25519_PUBLIC_KEY_LENGTH);
+
+        let public_key = match PublicKey::from_slice(public_key_bytes) {
+            Ok(key) => key,
+            Err(e) => {
+                serial_println!("Invalid public key format: {:?}", e);
+                return false;
+            }
         };
         
-        let s = match self.decode_scalar(s_bytes) {
-            Some(s) => s,
-            None => return false,
+        let sig = match Signature::from_slice(signature) {
+            Ok(s) => s,
+            Err(e) => {
+                serial_println!("Invalid signature format: {:?}", e);
+                return false;
+            }
         };
 
-        let mut h = [0u8; 64];
-        let mut hasher = self.new_sha512();
-        hasher.update(r_bytes);
-        hasher.update(&self.verification_key[..ED25519_PUBLIC_KEY_LENGTH]);
-        hasher.update(data);
-        h.copy_from_slice(&hasher.finalize());
+        match public_key.verify(data, &sig) {
+            Ok(_) => {
+                serial_println!("Signature verification successful");
+                true
+            },
+            Err(e) => {
+                serial_println!("Signature verification failed: {:?}", e);
+                false
+            }
+        }
+    }
+
+    pub fn generate_new_keypair(&mut self) -> Result<[u8; ED25519_SIGNATURE_LENGTH], &'static str> {
+        let mut seed_bytes = [0u8; 32];
+        if let Some(random_value) = self.get_secure_random() {
+            seed_bytes[0..8].copy_from_slice(&random_value.to_ne_bytes());
+
+            for i in 1..4 {
+                if let Some(r) = self.get_secure_random() {
+                    seed_bytes[i*8..(i+1)*8].copy_from_slice(&r.to_ne_bytes());
+                }
+            }
+            
+            let seed = ed25519_compact::Seed::new(seed_bytes);
+            let key_pair = ed25519_compact::KeyPair::from_seed(seed);
+
+            let mut vkey = [0u8; VKFS_KEY_LENGTH];
+            vkey[..ED25519_PUBLIC_KEY_LENGTH].copy_from_slice(key_pair.pk.as_ref());
+            self.set_verification_key(&vkey);
+
+            let mut private_key = [0u8; ED25519_SIGNATURE_LENGTH];
+            private_key.copy_from_slice(key_pair.sk.as_ref());
+            return Ok(private_key);
+        }
         
-        let h = match self.decode_scalar(&h) {
-            Some(h) => h,
-            None => return false,
+        Err("Failed to generate secure random seed")
+    }
+
+    fn get_secure_random(&self) -> Option<u64> {
+        if unsafe { core::arch::x86_64::__cpuid(1).ecx & (1 << 30) != 0 } {
+            let mut val: u64 = 0;
+            if unsafe { core::arch::x86_64::_rdrand64_step(&mut val) == 1 } {
+                return Some(val);
+            }
+        }
+
+        let tsc = crate::tsc::read_tsc();
+        Some(tsc.wrapping_mul(0x9e3779b97f4a7c15).rotate_left(17))
+    }
+
+    pub fn sign_data(&self, data: &[u8], signing_key: &[u8; ED25519_SIGNATURE_LENGTH]) 
+        -> Result<[u8; ED25519_SIGNATURE_LENGTH], &'static str> {
+
+        let private_key = match ed25519_compact::SecretKey::from_slice(signing_key) {
+            Ok(key) => key,
+            Err(_) => return Err("Invalid signing key"),
         };
 
-        let sb = self.scalar_multiply_base(&s);
-        let ha = self.scalar_multiply(&h, &self.decode_point(&self.verification_key[..]).unwrap_or_default());
-        let r_plus_ha = self.point_add(&r, &ha);
-        
-        constant_time_eq(&sb, &r_plus_ha)
+        let mut noise_bytes = [0u8; 16];
+        for i in 0..2 {
+            if let Some(random) = self.get_secure_random() {
+                let bytes = random.to_ne_bytes();
+                let start = i * 8;
+                noise_bytes[start..start+8].copy_from_slice(&bytes);
+            }
+        }
+
+        let signature = private_key.sign(data, Some(Noise::new(noise_bytes)));
+
+        let mut sig_bytes = [0u8; ED25519_SIGNATURE_LENGTH];
+        sig_bytes.copy_from_slice(signature.as_ref());
+        Ok(sig_bytes)
     }
 
-    fn decode_point(&self, bytes: &[u8]) -> Option<[u8; 32]> {
-        if bytes.len() != 32 {
-            return None;
-        }
-        
-        let mut p = [0u8; 32];
-        p.copy_from_slice(bytes);
-
-        if !self.is_on_curve(&p) {
-            return None;
-        }
-        
-        Some(p)
-    }
-    
-    fn decode_scalar(&self, bytes: &[u8]) -> Option<[u8; 32]> {
-        if bytes.len() != 32 {
-            return None;
-        }
-        
-        let mut s = [0u8; 32];
-        s.copy_from_slice(bytes);
-
-        self.reduce_scalar(&mut s);
-        
-        Some(s)
-    }
-}
-
-impl Sha512 {
-    fn new() -> Self {
-        Self {
-            state: [
-                0x6a09e667f3bcc908,
-                0xbb67ae8584caa73b,
-                0x3c6ef372fe94f82b,
-                0xa54ff53a5f1d36f1,
-                0x510e527fade682d1,
-                0x9b05688c2b3e6c1f,
-                0x1f83d9abfb41bd6b,
-                0x5be0cd19137e2179,
-            ],
-            buffer: [0; 128],
-            length: 0,
-        }
+    pub fn get_verification_key(&self) -> Result<[u8; VKFS_KEY_LENGTH], &'static str> {
+        let mut key_copy = [0u8; VKFS_KEY_LENGTH];
+        key_copy.copy_from_slice(&self.verification_key);
+        Ok(key_copy)
     }
 
-    fn update(&mut self, data: &[u8]) {
-        self.buffer[..data.len()].copy_from_slice(data);
-        self.length = data.len();
-    }
+    pub fn test_verification(&self) -> bool {
+        serial_println!("Running ED25519 verification test with self-generated keypair");
 
-    fn finalize(&self) -> [u8; 64] {
-        let mut result = [0u8; 64];
-        for i in 0..8 {
-            let bytes = self.state[i].to_be_bytes();
-            result[i*8..(i+1)*8].copy_from_slice(&bytes);
-        }
-        result
+        let seed = ed25519_compact::Seed::new([
+            0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60,
+            0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c, 0xc4,
+            0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19,
+            0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7f, 0x60
+        ]);
+        
+        let key_pair = ed25519_compact::KeyPair::from_seed(seed);
+        let message = b"test message";
+
+        let signature = key_pair.sk.sign(message, None);
+
+        let mut test_verifier = CryptoVerifier::new([0; VKFS_KEY_LENGTH]);
+        let mut test_key = [0; VKFS_KEY_LENGTH];
+        test_key[..32].copy_from_slice(key_pair.pk.as_ref());
+        test_verifier.set_verification_key(&test_key);
+
+        let signature_bytes = signature.as_ref();
+        let mut signature_array = [0u8; 64];
+        signature_array.copy_from_slice(signature_bytes);
+        
+        let result = test_verifier.verify_signature(message, &signature_array);
+        
+        serial_println!("Test verification result: {}", result);
+
+        let system_result = match key_store::KEY_STORE.lock().get_verification_key() {
+            Ok(key) => {
+                let has_real_key = !key.iter().all(|&b| b == 0);
+                if !has_real_key {
+                    serial_println!("WARNING: System is using zero verification key");
+                    false
+                } else {
+                    let mut system_test = CryptoVerifier::new([0; VKFS_KEY_LENGTH]);
+                    system_test.set_verification_key(&key);
+
+                    let sign_result = match key_store::KEY_STORE.lock().sign_data(message) {
+                        Ok(sig) => {
+                            let verify_result = system_test.verify_signature(message, &sig);
+                            serial_println!("System key verification test: {}", verify_result);
+                            verify_result
+                        },
+                        Err(e) => {
+                            serial_println!("System key signing test failed: {}", e);
+                            false
+                        }
+                    };
+                    
+                    sign_result
+                }
+            },
+            Err(e) => {
+                serial_println!("Failed to get system verification key: {}", e);
+                false
+            }
+        };
+        
+        serial_println!("System verification test: {}", system_result);
+        
+        result && system_result
     }
 }
 
 fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
-    let mut result = 0u8;
+    let mut result: u8 = 0;
+    
     for i in 0..32 {
         result |= a[i] ^ b[i];
     }
+    
     result == 0
+}
+
+pub fn init() -> bool {
+    serial_println!("Initializing cryptographic subsystem");
+
+    let verifier = CRYPTO_VERIFIER.lock();
+    let test_result = verifier.test_verification();
+    
+    if test_result {
+        serial_println!("Cryptographic subsystem initialization successful");
+    } else {
+        serial_println!("WARNING: Cryptographic subsystem initialization failed!");
+    }
+    
+    test_result
 }
 
 lazy_static! {

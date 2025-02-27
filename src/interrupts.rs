@@ -218,14 +218,52 @@ extern "x86-interrupt" fn page_fault_handler(
 extern "x86-interrupt" fn timer_interrupt_handler(
     _stack_frame: InterruptStackFrame)
 {
+    serial_println!("Timer interrupt fired");
+
     SYSTEM_TIME.tick();
-    
-    {
-        let mut scheduler = SCHEDULER.lock();
-        scheduler.tick();
-    }
+
+    static mut LAST_SCHEDULE: u64 = 0;
+    static mut ML_STATS_INTERVAL: u64 = 0;
     
     unsafe {
+        let current_ticks = SYSTEM_TIME.ticks();
+        
+        if current_ticks % 100 == 0 {
+            serial_println!("Timer ticks: {}", current_ticks);
+        }
+
+        if current_ticks.saturating_sub(LAST_SCHEDULE) >= 10 {
+            LAST_SCHEDULE = current_ticks;
+            
+            let mut scheduler = SCHEDULER.lock();
+            serial_println!("Scheduling from interrupt handler at tick {}", current_ticks);
+            scheduler.schedule();
+        }
+
+        ML_STATS_INTERVAL += 1;
+        if ML_STATS_INTERVAL >= 1000 {
+            ML_STATS_INTERVAL = 0;
+            
+            let scheduler = SCHEDULER.lock();
+            serial_println!("AI Scheduler statistics at tick {}:", current_ticks);
+            
+            let stats = scheduler.get_ml_stats();
+            for (key, value) in &stats {
+                serial_println!("  {}: {:.3}", key, value);
+            }
+
+            let processes = PROCESS_LIST.lock();
+            serial_println!("Process states:");
+            for process in processes.iter_processes() {
+                serial_println!("  Process {}: state={:?}, priority={}, remaining_time={}, CS={}",
+                    process.id().0,
+                    process.state(),
+                    process.priority,
+                    process.remaining_time_slice,
+                    process.context_switches);
+            }
+        }
+
         PICS.lock()
             .notify_end_of_interrupt(InterruptIndex::Timer.as_u8());
     }
@@ -293,7 +331,7 @@ pub fn init_idt() {
     IDT.load();
     
     unsafe {
-        PICS.lock().write_masks(0xfd, 0xff);
+        PICS.lock().write_masks(0xfc, 0xff);
         PICS.lock().initialize();
         
         

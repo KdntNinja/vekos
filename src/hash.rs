@@ -46,13 +46,11 @@ impl CpuFeatures {
     }
 }
 
-
 pub fn init() {
     let features = CPU_FEATURES.lock();
     serial_println!("RDRAND support: {}", features.has_rdrand);
     serial_println!("SHA extensions support: {}", features.has_sha);
 }
-
 
 fn try_hardware_hash(addr: VirtAddr, size: usize) -> Option<Hash> {
     let features = CPU_FEATURES.lock();
@@ -85,7 +83,6 @@ fn try_hardware_hash(addr: VirtAddr, size: usize) -> Option<Hash> {
     }
 }
 
-
 fn compute_fnv1a_hash(addr: VirtAddr, size: usize) -> Hash {
     const FNV_PRIME: u64 = 1099511628211;
     const FNV_OFFSET: u64 = 14695981039346656037;
@@ -99,7 +96,6 @@ fn compute_fnv1a_hash(addr: VirtAddr, size: usize) -> Hash {
     
     unsafe {
         let ptr = addr.as_ptr::<u8>();
-        
         
         for i in 0..chunks {
             let chunk_ptr = ptr.add(i * CHUNK_SIZE) as *const u64;
@@ -119,17 +115,14 @@ fn compute_fnv1a_hash(addr: VirtAddr, size: usize) -> Hash {
     Hash(hash)
 }
 
-
 pub fn hash_memory(addr: VirtAddr, size: usize) -> Hash {
     
     if let Some(hash) = try_hardware_hash(addr, size) {
         return hash;
     }
     
-    
     compute_fnv1a_hash(addr, size)
 }
-
 
 pub fn combine_hashes(hashes: &[Hash]) -> Hash {
     if hashes.is_empty() {
@@ -152,7 +145,6 @@ pub fn combine_hashes(hashes: &[Hash]) -> Hash {
     
     Hash(combined)
 }
-
 
 pub fn random_hash() -> Hash {
     let features = CPU_FEATURES.lock();
