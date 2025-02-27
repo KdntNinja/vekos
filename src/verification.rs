@@ -44,7 +44,6 @@ pub enum VerificationError {
     InconsistentMerkleTree,
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Hash(pub u64);
 
@@ -57,7 +56,6 @@ impl Hash {
         self.0
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub enum Operation {
@@ -74,7 +72,9 @@ pub enum Operation {
         path: alloc::string::String,
         operation_type: FSOpType,
     },
-    Boot { stage: BootStage },
+    Boot {
+        stage: BootStage,
+    },
     BootVerification {
         stage: BootStage,
         component_hash: Hash,
@@ -107,7 +107,6 @@ pub enum FSOpType {
     Delete,
     Modify,
 }
-
 
 #[derive(Debug, Clone)]
 pub struct OperationProof {
@@ -202,7 +201,6 @@ impl Clone for AtomicTransition {
     }
 }
 
-
 pub trait Verifiable {
     fn generate_proof(&self, operation: Operation) -> Result<OperationProof, VerificationError>;
     
@@ -210,7 +208,6 @@ pub trait Verifiable {
     
     fn state_hash(&self) -> Hash;
 }
-
 
 pub struct VerificationRegistry {
     proofs: Vec<OperationProof>,
@@ -232,7 +229,8 @@ impl StateTransitionRegistry {
     }
 
     pub fn record_transition(&mut self, transition: StateTransition) {
-        self.current_state.store(transition.to_state.0, Ordering::SeqCst);
+        self.current_state
+            .store(transition.to_state.0, Ordering::SeqCst);
         self.transitions.push(transition);
     }
 
@@ -245,36 +243,35 @@ impl StateTransitionRegistry {
         Ok(true)
     }
 
-    pub fn validate_transition(&self, from: Hash, to: Hash, transition_type: TransitionType) -> Result<bool, VerificationError> {
-        
+    pub fn validate_transition(
+        &self,
+        from: Hash,
+        to: Hash,
+        transition_type: TransitionType,
+    ) -> Result<bool, VerificationError> {
         if let Some(last) = self.transitions.last() {
             if last.to_state != from {
                 return Ok(false);
             }
         }
 
-        
         match transition_type {
             TransitionType::FileSystem => {
-                
                 if !self.verify_fs_transition(from, to)? {
                     return Ok(false);
                 }
-            },
+            }
             TransitionType::Directory => {
-                
                 if !self.verify_directory_transition(from, to)? {
                     return Ok(false);
                 }
-            },
+            }
             TransitionType::Block => {
-                
                 if !self.verify_block_transition(from, to)? {
                     return Ok(false);
                 }
-            },
+            }
             TransitionType::Inode => {
-                
                 if !self.verify_inode_transition(from, to)? {
                     return Ok(false);
                 }
@@ -285,43 +282,34 @@ impl StateTransitionRegistry {
     }
 
     fn verify_fs_transition(&self, from: Hash, to: Hash) -> Result<bool, VerificationError> {
-        
         let prev_root = from;
         let new_root = to;
 
-        
-        let transition_valid = (prev_root.0 ^ new_root.0) != 0 && 
-                             (prev_root.0 | new_root.0) != 0;
+        let transition_valid = (prev_root.0 ^ new_root.0) != 0 && (prev_root.0 | new_root.0) != 0;
 
         Ok(transition_valid)
     }
 
     fn verify_directory_transition(&self, from: Hash, to: Hash) -> Result<bool, VerificationError> {
-        
         let parent_hash = from;
         let child_hash = to;
 
-        
         let derived = Hash(parent_hash.0 ^ child_hash.0);
         Ok(derived.0 != 0)
     }
 
     fn verify_block_transition(&self, from: Hash, to: Hash) -> Result<bool, VerificationError> {
-        
         let prev_bitmap = from;
         let new_bitmap = to;
 
-        
         let changed_bits = (prev_bitmap.0 ^ new_bitmap.0).count_ones();
         Ok(changed_bits == 1)
     }
 
     fn verify_inode_transition(&self, from: Hash, to: Hash) -> Result<bool, VerificationError> {
-        
         let prev_table = from;
         let new_table = to;
 
-        
         let valid = (prev_table.0 & 0xFFFF_0000) == (new_table.0 & 0xFFFF_0000);
         Ok(valid)
     }
@@ -463,28 +451,28 @@ impl VerificationRegistry {
         verification_data.extend_from_slice(&proof.op_id.to_ne_bytes());
         verification_data.extend_from_slice(&proof.prev_state.0.to_ne_bytes());
         verification_data.extend_from_slice(&proof.new_state.0.to_ne_bytes());
-        
+
         match &proof.data {
             ProofData::Memory(mem_proof) => {
                 verification_data.extend_from_slice(&[0]);
                 verification_data.extend_from_slice(&(mem_proof.address.as_u64().to_ne_bytes()));
                 verification_data.extend_from_slice(&(mem_proof.size.to_ne_bytes()));
                 verification_data.extend_from_slice(&(mem_proof.frame_hash.0.to_ne_bytes()));
-            },
+            }
             ProofData::Filesystem(fs_proof) => {
                 verification_data.extend_from_slice(&[1]);
                 verification_data.extend_from_slice(fs_proof.path.as_bytes());
                 verification_data.extend_from_slice(&fs_proof.content_hash.0.to_ne_bytes());
-            },
+            }
             ProofData::Process(proc_proof) => {
                 verification_data.extend_from_slice(&[2]);
                 verification_data.extend_from_slice(&proc_proof.pid.to_ne_bytes());
                 verification_data.extend_from_slice(&proc_proof.state_hash.0.to_ne_bytes());
-            },
+            }
             ProofData::Boot(boot_proof) => {
                 verification_data.extend_from_slice(&[3]);
                 verification_data.extend_from_slice(&boot_proof.stage_hash.0.to_ne_bytes());
-            },
+            }
             ProofData::Tile(tile_proof) => {
                 verification_data.extend_from_slice(&[4]);
                 verification_data.extend_from_slice(&tile_proof.tile_id.to_ne_bytes());
@@ -498,7 +486,7 @@ impl VerificationRegistry {
                 verification_data.extend_from_slice(&data_hash.0.to_ne_bytes());
             },
         }
-    
+
         let verifier = CRYPTO_VERIFIER.lock();
         if !verifier.verify_signature(&verification_data, &proof.signature) {
             if is_early_boot {
@@ -531,19 +519,17 @@ impl VerificationRegistry {
 
     pub fn verify_chain(&self) -> Result<bool, VerificationError> {
         let mut current_hash = Hash(0);
-        
+
         for proof in &self.proofs {
-            
             self.verify_proof(proof)?;
-            
-            
+
             if proof.prev_state != current_hash {
                 return Ok(false);
             }
-            
+
             current_hash = proof.new_state;
         }
-        
+
         Ok(true)
     }
 
@@ -553,12 +539,12 @@ impl VerificationRegistry {
 }
 
 lazy_static::lazy_static! {
-    
-    pub static ref VERIFICATION_REGISTRY: Mutex<VerificationRegistry> = 
+
+    pub static ref VERIFICATION_REGISTRY: Mutex<VerificationRegistry> =
         Mutex::new(VerificationRegistry::new());
 }
 
 lazy_static! {
-    pub static ref STATE_TRANSITIONS: Mutex<StateTransitionRegistry> = 
+    pub static ref STATE_TRANSITIONS: Mutex<StateTransitionRegistry> =
         Mutex::new(StateTransitionRegistry::new());
 }

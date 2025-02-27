@@ -253,7 +253,6 @@ pub fn init() -> bool {
 }
 
 lazy_static! {
-    pub static ref CRYPTO_VERIFIER: Mutex<CryptoVerifier> = Mutex::new(
-        CryptoVerifier::new([0; VKFS_KEY_LENGTH])
-    );
+    pub static ref CRYPTO_VERIFIER: Mutex<CryptoVerifier> =
+        Mutex::new(CryptoVerifier::new([0; VKFS_KEY_LENGTH]));
 }
