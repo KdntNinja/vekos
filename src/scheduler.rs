@@ -15,17 +15,18 @@
 */
 
 use crate::println;
-use crate::process::{Process, ProcessId, ProcessState, PROCESS_LIST};
-use x86_64::{registers::control::Cr3, VirtAddr};
+use crate::{
+    process::{Process, ProcessId, ProcessState, PROCESS_LIST}
+};
+use x86_64::{
+    VirtAddr,
+    registers::control::Cr3,
+};
 
 use crate::serial_println;
 use crate::SYSTEM_TIME;
 use crate::priority::PriorityScheduler;
-use crate::serial_println;
 use crate::signals::Signal;
-use crate::MEMORY_MANAGER;
-use alloc::vec::Vec;
-use core::arch::asm;
 use lazy_static::lazy_static;
 use spin::Mutex;
 use core::arch::asm;

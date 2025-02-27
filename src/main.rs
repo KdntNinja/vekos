@@ -25,7 +25,6 @@
 #![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
-pub mod page_table_cache;
 pub mod serial;
 pub mod signals;
 pub mod tty;
@@ -37,8 +36,8 @@ use spin::Mutex;
 use alloc::string::String;
 use crate::fs::FILESYSTEM;
 use crate::fs::FileSystem;
-use crate::fs::FILESYSTEM;
 use crate::verification::VERIFICATION_REGISTRY;
+use embedded_graphics::pixelcolor::Rgb888;
 use alloc::format;
 use lazy_static::lazy_static;
 use crate::alloc::string::ToString;
@@ -49,50 +48,46 @@ use x86_64::VirtAddr;
 use crate::process::PROCESS_LIST;
 pub use shell::Shell;
 pub use operation_proofs::*;
-use spin::Mutex;
-pub use verification::{Hash, OperationProof, Verifiable, VerificationError};
-use x86_64::instructions::port::Port;
-use x86_64::VirtAddr;
+use boot_splash::{BootSplash, BootMessageType};
+use bootloader::bootinfo::MemoryRegionType;
 
-use crate::time::SYSTEM_TIME;
-use boot_verification::{BootStage, BOOT_VERIFICATION};
 use core::sync::atomic::Ordering;
+use boot_verification::{BOOT_VERIFICATION, BootStage};
+use crate::time::SYSTEM_TIME;
 
+mod verification;
 mod allocator;
+pub mod crypto;
+mod vkfs;
+pub mod syscall;
+mod boot_splash;
+pub mod hash_chain;
+pub mod elf;
+pub mod merkle_tree;
+pub mod operation_proofs;
+pub mod proof_storage;
+pub mod buffer_manager;
+pub mod inode_cache;
+pub mod shell;
+pub mod hash;
+pub mod page_table;
 pub mod block_cache;
 pub mod framebuffer;
 pub mod font;
 pub mod scheduler_ml;
 mod swap;
 mod boot_verification;
+mod tsc;
 mod buddy_allocator;
-pub mod buffer_manager;
-pub mod crypto;
-pub mod elf;
-pub mod font;
-pub mod framebuffer;
 mod fs;
+mod vga_buffer;
 mod gdt;
-pub mod hash;
-pub mod hash_chain;
-pub mod inode_cache;
 mod interrupts;
 mod memory;
-pub mod merkle_tree;
-pub mod operation_proofs;
-pub mod page_table;
-mod priority;
 mod process;
-pub mod proof_storage;
 mod scheduler;
-pub mod shell;
-mod swap;
-pub mod syscall;
 mod time;
-mod tsc;
-mod verification;
-mod vga_buffer;
-mod vkfs;
+mod priority;
 
 pub const PAGE_SIZE: usize = 4096;
 pub const MAX_ORDER: usize = 11;
@@ -120,10 +115,7 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let mut boot_verifier = BOOT_VERIFICATION.lock();
     boot_verifier.start_boot();
 
-    BootSplash::print_boot_message(
-        "Initializing Global Descriptor Table...",
-        BootMessageType::Info,
-    );
+    BootSplash::print_boot_message("Initializing Global Descriptor Table...", BootMessageType::Info);
     gdt::init();
     BootSplash::print_boot_message("GDT initialization complete", BootMessageType::Success);
 
@@ -133,27 +125,27 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
     let mut memory_manager = unsafe { MemoryManager::new(phys_mem_offset, &boot_info.memory_map) };
     BootSplash::print_boot_message("Memory management initialized", BootMessageType::Success);
-
+    
     BootSplash::print_boot_message("Initializing heap...", BootMessageType::Info);
     let mut mapper = unsafe { memory_manager.get_mapper() };
     let mut frame_allocator = unsafe { memory_manager.get_frame_allocator() };
-
+    
     if let Err(e) = init_heap(&mut mapper, &mut frame_allocator) {
         BootSplash::print_boot_message("Heap initialization failed!", BootMessageType::Error);
         panic!("Failed to initialize heap: {:?}", e);
     }
     BootSplash::print_boot_message("Heap initialization complete", BootMessageType::Success);
-
+    
     {
         let mut mm_lock = MEMORY_MANAGER.lock();
         *mm_lock = Some(memory_manager);
     }
-
+    
     match boot_verifier.verify_stage_vmk(BootStage::GDTLoaded) {
         Ok(proof) => {
             serial_println!("GDT verification successful, proof: {:?}", proof.op_id);
             VERIFICATION_REGISTRY.lock().register_proof(proof);
-        }
+        },
         Err(e) => panic!("GDT verification failed: {:?}", e),
     };
 
@@ -179,13 +171,13 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     match boot_verifier.verify_stage_vmk(BootStage::IDTLoaded) {
         Ok(proof) => {
             serial_println!("IDT verification proof generated: op_id={}", proof.op_id);
-        }
+        },
         Err(e) => {
             BootSplash::print_boot_message("IDT verification failed!", BootMessageType::Error);
             boot_verifier.log_error("IDT verification failed");
             panic!("IDT initialization failed with verification error: {:?}", e);
         }
-    }
+    }    
     BootSplash::print_boot_message("IDT initialization complete", BootMessageType::Success);
 
     serial_println!("Testing keyboard interrupt system...");
@@ -200,34 +192,25 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         Ok(proof) => {
             serial_println!("Memory initialization verification successful");
             VERIFICATION_REGISTRY.lock().register_proof(proof);
-        }
+        },
         Err(e) => panic!("Memory initialization verification failed: {:?}", e),
     };
     BootSplash::print_boot_message("Memory initialization complete", BootMessageType::Success);
 
     match boot_verifier.verify_stage_vmk(BootStage::HeapInitialized) {
         Ok(proof) => {
-            serial_println!(
-                "Heap initialization verification proof generated: op_id={}",
-                proof.op_id
-            );
-        }
+            serial_println!("Heap initialization verification proof generated: op_id={}", proof.op_id);
+        },
         Err(e) => {
             boot_verifier.log_error("Heap verification failed");
-            panic!(
-                "Heap initialization failed with verification error: {:?}",
-                e
-            );
+            panic!("Heap initialization failed with verification error: {:?}", e);
         }
     }
-
+    
     BootSplash::print_boot_message("Initializing scheduler...", BootMessageType::Info);
     *SCHEDULER.lock() = Some(Scheduler::new());
-    BootSplash::print_boot_message(
-        "Scheduler initialization complete",
-        BootMessageType::Success,
-    );
-
+    BootSplash::print_boot_message("Scheduler initialization complete", BootMessageType::Success);
+    
     BootSplash::print_boot_message("Initializing syscalls...", BootMessageType::Info);
     syscall::init();
     BootSplash::print_boot_message("Syscalls initialization complete", BootMessageType::Success);
@@ -293,25 +276,13 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     BootSplash::print_boot_message("VEKOS initialization complete", BootMessageType::Success);
 
-    serial_println!(
-        "Boot sequence completed in {} TSC cycles",
-        boot_verifier.get_boot_time()
-    );
+    serial_println!("Boot sequence completed in {} TSC cycles", boot_verifier.get_boot_time());
     match boot_verifier.verify_stage_vmk(BootStage::Complete) {
         Ok(proof) => {
-            serial_println!(
-                "Final boot verification proof generated: op_id={}",
-                proof.op_id
-            );
-            serial_println!(
-                "Boot verification chain complete with {} verified stages",
-                boot_verifier
-                    .stage_timestamps
-                    .iter()
-                    .filter(|&&x| x.is_some())
-                    .count()
-            );
-        }
+            serial_println!("Final boot verification proof generated: op_id={}", proof.op_id);
+            serial_println!("Boot verification chain complete with {} verified stages", 
+                boot_verifier.stage_timestamps.iter().filter(|&&x| x.is_some()).count());
+        },
         Err(e) => {
             boot_verifier.log_error("Final boot verification failed");
             panic!("Final boot verification failed with error: {:?}", e);
@@ -361,8 +332,9 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
                     init_process.switch_to_user_mode();
                 }
             }
-            Err(e) => serial_println!("Failed to create process: {:?}", e),
-        }
+        },
+           Err(e) => serial_println!("Failed to create process: {:?}", e)
+       }
     }
 
     serial_println!("VEKOS kernel entering idle state");

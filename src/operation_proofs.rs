@@ -14,8 +14,6 @@
 * limitations under the License.
 */
 
-use crate::verification::FSOpType;
-use crate::verification::ProofData;
 use crate::{
     hash, tsc,
     verification::{Hash, OperationProof, Verifiable, VerificationError},
