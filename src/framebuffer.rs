@@ -259,22 +259,22 @@ fn init_vga_dac() {
         write_index.write(0);
 
         let palette: [(u8, u8, u8); 16] = [
-            (0, 0, 0),    // 0: Black
-            (0, 0, 63),   // 1: Blue
-            (0, 63, 0),   // 2: Green
-            (0, 63, 63),  // 3: Cyan
-            (63, 0, 0),   // 4: Red
-            (63, 0, 63),  // 5: Magenta
-            (63, 32, 0),  // 6: Brown
-            (63, 63, 63), // 7: Light Gray
-            (32, 32, 32), // 8: Dark Gray
-            (32, 32, 63), // 9: Light Blue
-            (32, 63, 32), // 10: Light Green
-            (32, 63, 63), // 11: Light Cyan
-            (63, 32, 32), // 12: Light Red
-            (63, 32, 63), // 13: Light Magenta
-            (63, 63, 32), // 14: Yellow
-            (63, 63, 63), // 15: White
+            (0, 0, 0),
+            (0, 0, 63),
+            (0, 63, 0),
+            (0, 63, 63),
+            (63, 0, 0),
+            (63, 0, 63),
+            (63, 32, 0),
+            (63, 63, 63),
+            (32, 32, 32),
+            (32, 32, 63),
+            (32, 63, 32),
+            (32, 63, 63),
+            (63, 32, 32),
+            (63, 32, 63),
+            (63, 63, 32),
+            (63, 63, 63),
         ];
 
         for (r, g, b) in palette.iter() {
@@ -452,51 +452,51 @@ fn test_solid_color() {
 const MODE_13H_MISC: u8 = 0x63;
 
 const MODE_13H_SEQ: &[u8] = &[
-    0x03, // Reset
-    0x01, // Clocking Mode
-    0x0F, // Map Mask
-    0x00, // Character Map Select
-    0x0E, // Memory Mode
+    0x03,
+    0x01,
+    0x0F,
+    0x00,
+    0x0E,
 ];
 
 const MODE_13H_CRTC: &[u8] = &[
-    0x5F, // 0x00: Horizontal Total
-    0x4F, // 0x01: Horizontal Display End
-    0x50, // 0x02: Start Horizontal Blanking
-    0x82, // 0x03: End Horizontal Blanking
-    0x54, // 0x04: Start Horizontal Retrace
-    0x80, // 0x05: End Horizontal Retrace
-    0xBF, // 0x06: Vertical Total
-    0x1F, // 0x07: Overflow
-    0x00, // 0x08: Preset Row Scan
-    0x41, // 0x09: Maximum Scan Line
-    0x00, // 0x0A: Cursor Start
-    0x00, // 0x0B: Cursor End
-    0x00, // 0x0C: Start Address High
-    0x00, // 0x0D: Start Address Low
-    0x00, // 0x0E: Cursor Location High
-    0x00, // 0x0F: Cursor Location Low
-    0x9C, // 0x10: Vertical Retrace Start
-    0x8E, // 0x11: Vertical Retrace End
-    0x8F, // 0x12: Vertical Display End
-    0x28, // 0x13: Offset
-    0x40, // 0x14: Underline Location
-    0x96, // 0x15: Start Vertical Blanking
-    0xB9, // 0x16: End Vertical Blanking
-    0xA3, // 0x17: CRTC Mode Control
-    0xFF, // 0x18: Line Compare
+    0x5F,
+    0x4F,
+    0x50, 
+    0x82,
+    0x54,
+    0x80,
+    0xBF,
+    0x1F,
+    0x00,
+    0x41,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x9C,
+    0x8E,
+    0x8F,
+    0x28,
+    0x40,
+    0x96,
+    0xB9,
+    0xA3,
+    0xFF,
 ];
 
 const MODE_13H_GC: &[u8] = &[
-    0x00, // Set/Reset
-    0x00, // Enable Set/Reset
-    0x00, // Color Compare
-    0x00, // Data Rotate
-    0x00, // Read Map Select
-    0x40, // Graphics Mode
-    0x05, // Miscellaneous
-    0x0F, // Color Don't Care
-    0xFF, // Bit Mask
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x00,
+    0x40,
+    0x05,
+    0x0F,
+    0xFF,
 ];
 
 fn write_registers() {
@@ -568,16 +568,16 @@ fn setup_crtc_timing() {
         crtc_data.write(current & 0x7F_u8);
 
         let timing_values: [(u8, u8); 10] = [
-            (0x00, 0x5F), // Horizontal total
-            (0x01, 0x4F), // Horizontal display enable end
-            (0x02, 0x50), // Start horizontal blanking
-            (0x03, 0x82), // End horizontal blanking
-            (0x04, 0x54), // Start horizontal retrace
-            (0x05, 0x80), // End horizontal retrace
-            (0x06, 0xBF), // Vertical total
-            (0x07, 0x1F), // Overflow
-            (0x09, 0x40), // Maximum scan line - Changed
-            (0x11, 0x0E), // Vertical retrace end - Changed
+            (0x00, 0x5F),
+            (0x01, 0x4F),
+            (0x02, 0x50),
+            (0x03, 0x82),
+            (0x04, 0x54),
+            (0x05, 0x80),
+            (0x06, 0xBF),
+            (0x07, 0x1F),
+            (0x09, 0x40),
+            (0x11, 0x0E),
         ];
 
         for (index, value) in timing_values.iter() {
@@ -618,10 +618,10 @@ fn set_mode_13h() {
         }
 
         let seq_values: [(u8, u8); 4] = [
-            (0x01, 0x01), // Enable character clocking and screen
-            (0x02, 0x0F), // Enable writing to all planes
-            (0x03, 0x00), // No character font select
-            (0x04, 0x08), // Enable memory access and disable odd/even
+            (0x01, 0x01),
+            (0x02, 0x0F),
+            (0x03, 0x00),
+            (0x04, 0x08),
         ];
 
         for (index, value) in seq_values.iter() {
@@ -653,15 +653,15 @@ fn set_mode_13h() {
         let mut gc_data = Port::<u8>::new(VGA_GC_DATA);
 
         let gc_values: [(u8, u8); 9] = [
-            (0x00, 0x00), // Set/Reset
-            (0x01, 0x00), // Enable Set/Reset
-            (0x02, 0x00), // Color Compare
-            (0x03, 0x00), // Data Rotate
-            (0x04, 0x00), // Read Map Select
-            (0x05, 0x40), // Mode Register
-            (0x06, 0x05), // Miscellaneous
-            (0x07, 0x0F), // Color Don't Care
-            (0x08, 0xFF), // Bit Mask
+            (0x00, 0x00),
+            (0x01, 0x00),
+            (0x02, 0x00),
+            (0x03, 0x00),
+            (0x04, 0x00),
+            (0x05, 0x40),
+            (0x06, 0x05),
+            (0x07, 0x0F),
+            (0x08, 0xFF),
         ];
 
         for (index, value) in gc_values.iter() {
