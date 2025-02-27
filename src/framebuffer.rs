@@ -713,6 +713,6 @@ pub fn init() {
 
     let fb = Framebuffer::new();
     *FRAMEBUFFER.lock() = Some(fb);
-    
+
     // test_solid_color();
 }
