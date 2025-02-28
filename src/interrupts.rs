@@ -30,13 +30,18 @@ use spin;
 use x86_64::instructions::port::Port;
 use x86_64::structures::idt::{InterruptDescriptorTable, InterruptStackFrame, PageFaultErrorCode};
 
+/// Offset for the first PIC.
 pub const PIC_1_OFFSET: u8 = 32;
+/// Offset for the second PIC.
 pub const PIC_2_OFFSET: u8 = PIC_1_OFFSET + 8;
+/// Index for the syscall interrupt.
 pub const SYSCALL_INTERRUPT_INDEX: u8 = 0x80;
 
+/// Static instance of chained PICs protected by a mutex.
 pub static PICS: spin::Mutex<ChainedPics> =
     spin::Mutex::new(unsafe { ChainedPics::new(PIC_1_OFFSET, PIC_2_OFFSET) });
 
+/// Enum representing different interrupt indices.
 #[derive(Debug, Clone, Copy)]
 #[repr(u8)]
 pub enum InterruptIndex {
@@ -47,16 +52,19 @@ pub enum InterruptIndex {
 }
 
 impl InterruptIndex {
+    /// Converts the interrupt index to a `u8`.
     fn as_u8(self) -> u8 {
         self as u8
     }
 
+    /// Converts the interrupt index to a `usize`.
     fn as_usize(self) -> usize {
         usize::from(self.as_u8())
     }
 }
 
 lazy_static! {
+    /// Static instance of the Interrupt Descriptor Table (IDT).
     static ref IDT: InterruptDescriptorTable = {
         let mut idt = InterruptDescriptorTable::new();
         idt.breakpoint.set_handler_fn(breakpoint_handler);
@@ -75,6 +83,7 @@ lazy_static! {
 }
 
 lazy_static! {
+    /// Static instance of the keyboard handler.
     static ref KEYBOARD: spin::Mutex<Keyboard<layouts::Jis109Key, ScancodeSet1>> =
         spin::Mutex::new(Keyboard::new(
             ScancodeSet1::new(),
@@ -83,6 +92,7 @@ lazy_static! {
         ));
 }
 
+/// Resets the keyboard controller.
 unsafe fn reset_keyboard_controller() {
     let mut command_port = Port::<u8>::new(0x64);
     let mut data_port = Port::<u8>::new(0x60);
@@ -112,10 +122,21 @@ unsafe fn reset_keyboard_controller() {
     let _ack = data_port.read();
 }
 
+/// Handler for breakpoint exceptions.
+///
+/// # Arguments
+///
+/// * `stack_frame` - The interrupt stack frame.
 extern "x86-interrupt" fn breakpoint_handler(stack_frame: InterruptStackFrame) {
     println!("EXCEPTION: BREAKPOINT\n{:#?}", stack_frame);
 }
 
+/// Handler for double fault exceptions.
+///
+/// # Arguments
+///
+/// * `stack_frame` - The interrupt stack frame.
+/// * `_error_code` - The error code.
 extern "x86-interrupt" fn double_fault_handler(
     stack_frame: InterruptStackFrame,
     _error_code: u64,
@@ -123,6 +144,12 @@ extern "x86-interrupt" fn double_fault_handler(
     panic!("EXCEPTION: DOUBLE FAULT\n{:#?}", stack_frame);
 }
 
+/// Handler for general protection fault exceptions.
+///
+/// # Arguments
+///
+/// * `stack_frame` - The interrupt stack frame.
+/// * `error_code` - The error code.
 extern "x86-interrupt" fn general_protection_fault_handler(
     stack_frame: InterruptStackFrame,
     error_code: u64,
@@ -133,6 +160,12 @@ extern "x86-interrupt" fn general_protection_fault_handler(
     loop {}
 }
 
+/// Handler for page fault exceptions.
+///
+/// # Arguments
+///
+/// * `stack_frame` - The interrupt stack frame.
+/// * `error_code` - The page fault error code.
 extern "x86-interrupt" fn page_fault_handler(
     stack_frame: InterruptStackFrame,
     error_code: PageFaultErrorCode,
@@ -211,38 +244,44 @@ extern "x86-interrupt" fn page_fault_handler(
     }
 }
 
-extern "x86-interrupt" fn timer_interrupt_handler(
-    _stack_frame: InterruptStackFrame)
-{
+/// Handler for timer interrupts.
+///
+/// # Arguments
+///
+/// * `_stack_frame` - The interrupt stack frame.
+extern "x86-interrupt" fn timer_interrupt_handler(_stack_frame: InterruptStackFrame) {
     serial_println!("Timer interrupt fired");
 
     SYSTEM_TIME.tick();
 
     static mut LAST_SCHEDULE: u64 = 0;
     static mut ML_STATS_INTERVAL: u64 = 0;
-    
+
     unsafe {
         let current_ticks = SYSTEM_TIME.ticks();
-        
+
         if current_ticks % 100 == 0 {
             serial_println!("Timer ticks: {}", current_ticks);
         }
 
         if current_ticks.saturating_sub(LAST_SCHEDULE) >= 10 {
             LAST_SCHEDULE = current_ticks;
-            
+
             let mut scheduler = SCHEDULER.lock();
-            serial_println!("Scheduling from interrupt handler at tick {}", current_ticks);
+            serial_println!(
+                "Scheduling from interrupt handler at tick {}",
+                current_ticks
+            );
             scheduler.schedule();
         }
 
         ML_STATS_INTERVAL += 1;
         if ML_STATS_INTERVAL >= 1000 {
             ML_STATS_INTERVAL = 0;
-            
+
             let scheduler = SCHEDULER.lock();
             serial_println!("AI Scheduler statistics at tick {}:", current_ticks);
-            
+
             let stats = scheduler.get_ml_stats();
             for (key, value) in &stats {
                 serial_println!("  {}: {:.3}", key, value);
@@ -251,12 +290,14 @@ extern "x86-interrupt" fn timer_interrupt_handler(
             let processes = PROCESS_LIST.lock();
             serial_println!("Process states:");
             for process in processes.iter_processes() {
-                serial_println!("  Process {}: state={:?}, priority={}, remaining_time={}, CS={}",
+                serial_println!(
+                    "  Process {}: state={:?}, priority={}, remaining_time={}, CS={}",
                     process.id().0,
                     process.state(),
                     process.priority,
                     process.remaining_time_slice,
-                    process.context_switches);
+                    process.context_switches
+                );
             }
         }
 
@@ -265,6 +306,11 @@ extern "x86-interrupt" fn timer_interrupt_handler(
     }
 }
 
+/// Handler for keyboard interrupts.
+///
+/// # Arguments
+///
+/// * `_stack_frame` - The interrupt stack frame.
 extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStackFrame) {
     use pc_keyboard::DecodedKey;
     use x86_64::instructions::port::Port;
@@ -321,6 +367,7 @@ extern "x86-interrupt" fn keyboard_interrupt_handler(_stack_frame: InterruptStac
     }
 }
 
+/// Initializes the Interrupt Descriptor Table (IDT).
 pub fn init_idt() {
     IDT.load();
 

@@ -35,11 +35,17 @@ use crate::MEMORY_MANAGER;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+/// Struct representing the command executor.
 pub struct CommandExecutor {
     builtins: Vec<(&'static str, fn(&[String]) -> ShellResult)>,
 }
 
 impl CommandExecutor {
+    /// Creates a new `CommandExecutor`.
+    ///
+    /// # Returns
+    ///
+    /// A new `CommandExecutor` instance.
     pub fn new() -> Self {
         let mut executor = Self {
             builtins: Vec::new(),
@@ -55,11 +61,27 @@ impl CommandExecutor {
         executor
     }
 
+    /// Registers a built-in command.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the command.
+    /// * `handler` - The function to handle the command.
     pub fn register_builtin(&mut self, name: &'static str, handler: fn(&[String]) -> ShellResult) {
         self.builtins.push((name, handler));
     }
 
-    fn execute_program(&self, path: &str, args: &[String]) -> ShellResult {
+    /// Executes a program.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The path to the program.
+    /// * `args` - The arguments to pass to the program.
+    ///
+    /// # Returns
+    ///
+    /// A `ShellResult` indicating success or failure.
+    fn execute_program(&self, path: &str) -> ShellResult {
         let mut fs = FILESYSTEM.lock();
         serial_println!("Attempting to read program file: {}", path);
         match fs.read_file(path) {
@@ -101,6 +123,16 @@ impl CommandExecutor {
         }
     }
 
+    /// Executes a command.
+    ///
+    /// # Arguments
+    ///
+    /// * `command` - The command to execute.
+    /// * `args` - The arguments to pass to the command.
+    ///
+    /// # Returns
+    ///
+    /// A `ShellResult` indicating success or failure.
     pub fn execute(&self, command: &str, args: &[String]) -> ShellResult {
         serial_println!("Shell: Starting command execution for '{}'", command);
 
@@ -122,7 +154,7 @@ impl CommandExecutor {
                 Ok(_) => {
                     serial_println!("Found program file");
                     drop(fs);
-                    self.execute_program(&program_path, args)
+                    self.execute_program(&program_path)
                 }
                 Err(_) => {
                     serial_println!("Program not found");
@@ -132,18 +164,45 @@ impl CommandExecutor {
         }
     }
 
+    /// Built-in command to exit the shell.
+    ///
+    /// # Arguments
+    ///
+    /// * `args` - The arguments to the command.
+    ///
+    /// # Returns
+    ///
+    /// A `ShellResult` indicating success or failure.
     fn cmd_exit(args: &[String]) -> ShellResult {
         let code = args.get(0).and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
 
         Ok(ExitCode::from_i32(code))
     }
 
+    /// Built-in command to clear the screen.
+    ///
+    /// # Arguments
+    ///
+    /// * `_args` - The arguments to the command.
+    ///
+    /// # Returns
+    ///
+    /// A `ShellResult` indicating success or failure.
     fn cmd_clear(_args: &[String]) -> ShellResult {
         let display = ShellDisplay::new();
         display.clear_screen();
         Ok(ExitCode::Success)
     }
 
+    /// Built-in command to display help information.
+    ///
+    /// # Arguments
+    ///
+    /// * `_args` - The arguments to the command.
+    ///
+    /// # Returns
+    ///
+    /// A `ShellResult` indicating success or failure.
     fn cmd_help(_args: &[String]) -> ShellResult {
         println!("Available commands:");
         println!("  exit [code]    - Exit the shell with optional status code");
@@ -160,6 +219,15 @@ impl CommandExecutor {
         Ok(ExitCode::Success)
     }
 
+    /// Built-in command to list directory contents.
+    ///
+    /// # Arguments
+    ///
+    /// * `args` - The arguments to the command.
+    ///
+    /// # Returns
+    ///
+    /// A `ShellResult` indicating success or failure.
     fn cmd_ls(args: &[String]) -> ShellResult {
         serial_println!("Executing ls with args: {:?}", args);
 
@@ -189,6 +257,15 @@ impl CommandExecutor {
         Ok(ExitCode::Success)
     }
 
+    /// Built-in command to change the current directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `args` - The arguments to the command.
+    ///
+    /// # Returns
+    ///
+    /// A `ShellResult` indicating success or failure.
     fn cmd_cd(args: &[String]) -> ShellResult {
         let path = args.get(0).map(String::as_str).unwrap_or("/");
 
@@ -233,6 +310,15 @@ impl CommandExecutor {
         }
     }
 
+    /// Built-in command to print the current working directory.
+    ///
+    /// # Arguments
+    ///
+    /// * `_args` - The arguments to the command.
+    ///
+    /// # Returns
+    ///
+    /// A `ShellResult` indicating success or failure.
     fn cmd_pwd(_args: &[String]) -> ShellResult {
         serial_println!("PWD command execution started");
 

@@ -25,69 +25,63 @@
 #![reexport_test_harness_main = "test_main"]
 
 extern crate alloc;
-pub mod serial;
-pub mod signals;
-pub mod tty;
-pub mod page_table_cache;
 pub mod key_store;
-use x86_64::instructions::port::Port;
-use crate::framebuffer::FRAMEBUFFER;
-use spin::Mutex;
-use alloc::string::String;
-use crate::fs::FILESYSTEM;
-use crate::fs::FileSystem;
-use crate::verification::VERIFICATION_REGISTRY;
-use embedded_graphics::pixelcolor::Rgb888;
-use alloc::format;
-use lazy_static::lazy_static;
+pub mod page_table_cache;
+pub mod serial;
 use crate::alloc::string::ToString;
-pub use verification::{Hash, OperationProof, Verifiable, VerificationError};
-use core::panic::PanicInfo;
+use crate::fs::FileSystem;
+use crate::fs::FILESYSTEM;
+use crate::verification::VERIFICATION_REGISTRY;
+use alloc::format;
+use boot_splash::{BootMessageType, BootSplash};
 use bootloader::{bootinfo::BootInfo, entry_point};
-use x86_64::VirtAddr;
-use crate::process::PROCESS_LIST;
-pub use shell::Shell;
+use core::panic::PanicInfo;
+use lazy_static::lazy_static;
 pub use operation_proofs::*;
-use boot_splash::{BootSplash, BootMessageType};
-use bootloader::bootinfo::MemoryRegionType;
+pub use operation_proofs::*;
+use spin::Mutex;
+pub use verification::{Hash, OperationProof, Verifiable, VerificationError};
+use x86_64::instructions::port::Port;
+use x86_64::VirtAddr;
 
-use core::sync::atomic::Ordering;
-use boot_verification::{BOOT_VERIFICATION, BootStage};
 use crate::time::SYSTEM_TIME;
+use boot_verification::{BootStage, BOOT_VERIFICATION};
+use core::sync::atomic::Ordering;
 
-mod verification;
 mod allocator;
-pub mod crypto;
-mod vkfs;
-pub mod syscall;
-mod boot_splash;
-pub mod hash_chain;
-pub mod elf;
-pub mod merkle_tree;
-pub mod operation_proofs;
-pub mod proof_storage;
-pub mod buffer_manager;
-pub mod inode_cache;
-pub mod shell;
-pub mod hash;
-pub mod page_table;
 pub mod block_cache;
-pub mod framebuffer;
-pub mod font;
-pub mod scheduler_ml;
-mod swap;
+mod boot_splash;
 mod boot_verification;
-mod tsc;
 mod buddy_allocator;
+pub mod buffer_manager;
+pub mod crypto;
+pub mod elf;
+pub mod font;
+pub mod framebuffer;
 mod fs;
-mod vga_buffer;
 mod gdt;
+pub mod hash;
+pub mod hash_chain;
+pub mod inode_cache;
 mod interrupts;
 mod memory;
-mod process;
-mod scheduler;
-mod time;
+pub mod merkle_tree;
+pub mod operation_proofs;
+pub mod page_table;
 mod priority;
+mod process;
+pub mod proof_storage;
+mod scheduler;
+pub mod scheduler_ml;
+pub mod shell;
+mod swap;
+pub mod syscall;
+mod time;
+mod tsc;
+pub mod tty;
+mod verification;
+mod vga_buffer;
+mod vkfs;
 
 pub const PAGE_SIZE: usize = 4096;
 pub const MAX_ORDER: usize = 11;
@@ -109,13 +103,21 @@ lazy_static! {
     static ref SCHEDULER: Mutex<Option<Scheduler>> = Mutex::new(None);
 }
 
+/// The main entry point for the kernel.
+///
+/// # Arguments
+///
+/// * `boot_info` - A reference to the `BootInfo` structure provided by the bootloader.
 fn kernel_main(boot_info: &'static BootInfo) -> ! {
     BootSplash::show_splash();
     BootSplash::print_boot_message("Starting VEKOS boot sequence...", BootMessageType::Info);
     let mut boot_verifier = BOOT_VERIFICATION.lock();
     boot_verifier.start_boot();
 
-    BootSplash::print_boot_message("Initializing Global Descriptor Table...", BootMessageType::Info);
+    BootSplash::print_boot_message(
+        "Initializing Global Descriptor Table...",
+        BootMessageType::Info,
+    );
     gdt::init();
     BootSplash::print_boot_message("GDT initialization complete", BootMessageType::Success);
 
@@ -125,27 +127,27 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let phys_mem_offset = VirtAddr::new(boot_info.physical_memory_offset);
     let mut memory_manager = unsafe { MemoryManager::new(phys_mem_offset, &boot_info.memory_map) };
     BootSplash::print_boot_message("Memory management initialized", BootMessageType::Success);
-    
+
     BootSplash::print_boot_message("Initializing heap...", BootMessageType::Info);
     let mut mapper = unsafe { memory_manager.get_mapper() };
     let mut frame_allocator = unsafe { memory_manager.get_frame_allocator() };
-    
+
     if let Err(e) = init_heap(&mut mapper, &mut frame_allocator) {
         BootSplash::print_boot_message("Heap initialization failed!", BootMessageType::Error);
         panic!("Failed to initialize heap: {:?}", e);
     }
     BootSplash::print_boot_message("Heap initialization complete", BootMessageType::Success);
-    
+
     {
         let mut mm_lock = MEMORY_MANAGER.lock();
         *mm_lock = Some(memory_manager);
     }
-    
+
     match boot_verifier.verify_stage_vmk(BootStage::GDTLoaded) {
         Ok(proof) => {
             serial_println!("GDT verification successful, proof: {:?}", proof.op_id);
             VERIFICATION_REGISTRY.lock().register_proof(proof);
-        },
+        }
         Err(e) => panic!("GDT verification failed: {:?}", e),
     };
 
@@ -153,17 +155,32 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     hash::init();
     BootSplash::print_boot_message("Hash initialization complete", BootMessageType::Success);
 
-    BootSplash::print_boot_message("Initializing cryptographic features...", BootMessageType::Info);
+    BootSplash::print_boot_message(
+        "Initializing cryptographic features...",
+        BootMessageType::Info,
+    );
     crypto::init();
-    BootSplash::print_boot_message("Cryptographic initialization complete", BootMessageType::Success);
+    BootSplash::print_boot_message(
+        "Cryptographic initialization complete",
+        BootMessageType::Success,
+    );
 
-    BootSplash::print_boot_message("Initializing early key management...", BootMessageType::Info);
+    BootSplash::print_boot_message(
+        "Initializing early key management...",
+        BootMessageType::Info,
+    );
     if let Err(e) = key_store::KEY_STORE.lock().init_early_boot() {
-        BootSplash::print_boot_message("Early key management initialization failed!", BootMessageType::Error);
+        BootSplash::print_boot_message(
+            "Early key management initialization failed!",
+            BootMessageType::Error,
+        );
         boot_verifier.log_error("Early key initialization failed");
         serial_println!("Early key initialization error: {}", e);
     } else {
-        BootSplash::print_boot_message("Early key management initialization complete", BootMessageType::Success);
+        BootSplash::print_boot_message(
+            "Early key management initialization complete",
+            BootMessageType::Success,
+        );
     }
 
     BootSplash::print_boot_message("Initializing IDT...", BootMessageType::Info);
@@ -171,13 +188,13 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     match boot_verifier.verify_stage_vmk(BootStage::IDTLoaded) {
         Ok(proof) => {
             serial_println!("IDT verification proof generated: op_id={}", proof.op_id);
-        },
+        }
         Err(e) => {
             BootSplash::print_boot_message("IDT verification failed!", BootMessageType::Error);
             boot_verifier.log_error("IDT verification failed");
             panic!("IDT initialization failed with verification error: {:?}", e);
         }
-    }    
+    }
     BootSplash::print_boot_message("IDT initialization complete", BootMessageType::Success);
 
     serial_println!("Testing keyboard interrupt system...");
@@ -192,25 +209,34 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
         Ok(proof) => {
             serial_println!("Memory initialization verification successful");
             VERIFICATION_REGISTRY.lock().register_proof(proof);
-        },
+        }
         Err(e) => panic!("Memory initialization verification failed: {:?}", e),
     };
     BootSplash::print_boot_message("Memory initialization complete", BootMessageType::Success);
 
     match boot_verifier.verify_stage_vmk(BootStage::HeapInitialized) {
         Ok(proof) => {
-            serial_println!("Heap initialization verification proof generated: op_id={}", proof.op_id);
-        },
+            serial_println!(
+                "Heap initialization verification proof generated: op_id={}",
+                proof.op_id
+            );
+        }
         Err(e) => {
             boot_verifier.log_error("Heap verification failed");
-            panic!("Heap initialization failed with verification error: {:?}", e);
+            panic!(
+                "Heap initialization failed with verification error: {:?}",
+                e
+            );
         }
     }
-    
+
     BootSplash::print_boot_message("Initializing scheduler...", BootMessageType::Info);
     *SCHEDULER.lock() = Some(Scheduler::new());
-    BootSplash::print_boot_message("Scheduler initialization complete", BootMessageType::Success);
-    
+    BootSplash::print_boot_message(
+        "Scheduler initialization complete",
+        BootMessageType::Success,
+    );
+
     BootSplash::print_boot_message("Initializing syscalls...", BootMessageType::Info);
     syscall::init();
     BootSplash::print_boot_message("Syscalls initialization complete", BootMessageType::Success);
@@ -232,14 +258,26 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     fs::init();
     let proof_storage = proof_storage::PROOF_STORAGE.lock();
     drop(proof_storage);
-    BootSplash::print_boot_message("Filesystem initialization complete", BootMessageType::Success);
+    BootSplash::print_boot_message(
+        "Filesystem initialization complete",
+        BootMessageType::Success,
+    );
 
-    BootSplash::print_boot_message("Completing key management initialization...", BootMessageType::Info);
+    BootSplash::print_boot_message(
+        "Completing key management initialization...",
+        BootMessageType::Info,
+    );
     if let Err(e) = key_store::init() {
-        BootSplash::print_boot_message("Key management persistence failed", BootMessageType::Warning);
+        BootSplash::print_boot_message(
+            "Key management persistence failed",
+            BootMessageType::Warning,
+        );
         serial_println!("Key persistence error: {}", e);
     } else {
-        BootSplash::print_boot_message("Key management fully initialized", BootMessageType::Success);
+        BootSplash::print_boot_message(
+            "Key management fully initialized",
+            BootMessageType::Success,
+        );
     }
 
     BootSplash::print_boot_message("Verifying filesystem structure...", BootMessageType::Info);
@@ -276,13 +314,25 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
 
     BootSplash::print_boot_message("VEKOS initialization complete", BootMessageType::Success);
 
-    serial_println!("Boot sequence completed in {} TSC cycles", boot_verifier.get_boot_time());
+    serial_println!(
+        "Boot sequence completed in {} TSC cycles",
+        boot_verifier.get_boot_time()
+    );
     match boot_verifier.verify_stage_vmk(BootStage::Complete) {
         Ok(proof) => {
-            serial_println!("Final boot verification proof generated: op_id={}", proof.op_id);
-            serial_println!("Boot verification chain complete with {} verified stages", 
-                boot_verifier.stage_timestamps.iter().filter(|&&x| x.is_some()).count());
-        },
+            serial_println!(
+                "Final boot verification proof generated: op_id={}",
+                proof.op_id
+            );
+            serial_println!(
+                "Boot verification chain complete with {} verified stages",
+                boot_verifier
+                    .stage_timestamps
+                    .iter()
+                    .filter(|&&x| x.is_some())
+                    .count()
+            );
+        }
         Err(e) => {
             boot_verifier.log_error("Final boot verification failed");
             panic!("Final boot verification failed with error: {:?}", e);
@@ -293,48 +343,67 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     let verification_result = VERIFICATION_REGISTRY.lock().test_verification_chain();
     match verification_result {
         Ok(true) => {
-            BootSplash::print_boot_message("Security subsystem verification successful", BootMessageType::Success);
-        },
+            BootSplash::print_boot_message(
+                "Security subsystem verification successful",
+                BootMessageType::Success,
+            );
+        }
         Ok(false) => {
-            BootSplash::print_boot_message("Security subsystem verification FAILED!", BootMessageType::Error);
-            serial_println!("WARNING: Security system verification failed, proceeding with limited trust");
-        },
+            BootSplash::print_boot_message(
+                "Security subsystem verification FAILED!",
+                BootMessageType::Error,
+            );
+            serial_println!(
+                "WARNING: Security system verification failed, proceeding with limited trust"
+            );
+        }
         Err(e) => {
-            BootSplash::print_boot_message("Security subsystem verification error", BootMessageType::Error);
+            BootSplash::print_boot_message(
+                "Security subsystem verification error",
+                BootMessageType::Error,
+            );
             serial_println!("ERROR: Security system verification error: {:?}", e);
         }
     }
 
-    BootSplash::print_boot_message("Creating initial userspace program...", BootMessageType::Info);
+    BootSplash::print_boot_message(
+        "Creating initial userspace program...",
+        BootMessageType::Info,
+    );
     let mut mm_lock = MEMORY_MANAGER.lock();
     if let Some(mm) = mm_lock.as_mut() {
-       match Process::new(mm) {
-        Ok(mut init_process) => {
-            init_process.current_dir = "/".to_string();
-            serial_println!("Loading VETests program...");
+        match Process::new(mm) {
+            Ok(mut init_process) => {
+                init_process.current_dir = "/".to_string();
+                serial_println!("Loading VETests program...");
 
-            let program_data = {
-                let mut fs = FILESYSTEM.lock();
-                fs.read_file("/programs/VETests")
-            };
-        
-            if let Ok(program_data) = program_data {
-                if let Err(e) = init_process.load_program(&program_data, mm) {
-                    serial_println!("Failed to load program: {:?}", e);
-                } else {
-                    BootSplash::print_boot_message("Userspace initialization complete", BootMessageType::Success);
+                let program_data = {
+                    let mut fs = FILESYSTEM.lock();
+                    fs.read_file("/programs/VETests")
+                };
 
-                    unsafe {
-                        serial_println!("VEKOS kernel with AI-enhanced scheduling is initialized");
-                        serial_println!("Switching to user mode, scheduling will continue via timer interrupts");
+                if let Ok(program_data) = program_data {
+                    if let Err(e) = init_process.load_program(&program_data, mm) {
+                        serial_println!("Failed to load program: {:?}", e);
+                    } else {
+                        BootSplash::print_boot_message(
+                            "Userspace initialization complete",
+                            BootMessageType::Success,
+                        );
+
+                        unsafe {
+                            serial_println!(
+                                "VEKOS kernel with AI-enhanced scheduling is initialized"
+                            );
+                            serial_println!("Switching to user mode, scheduling will continue via timer interrupts");
+                        }
+
+                        init_process.switch_to_user_mode();
                     }
-
-                    init_process.switch_to_user_mode();
                 }
             }
-        },
-           Err(e) => serial_println!("Failed to create process: {:?}", e)
-       }
+            Err(e) => serial_println!("Failed to create process: {:?}", e),
+        }
     }
 
     serial_println!("VEKOS kernel entering idle state");
@@ -343,6 +412,11 @@ fn kernel_main(boot_info: &'static BootInfo) -> ! {
     }
 }
 
+/// Handles kernel panics.
+///
+/// # Arguments
+///
+/// * `info` - A reference to the `PanicInfo` structure containing panic information.
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
     serial_println!(
@@ -369,6 +443,11 @@ fn panic(info: &PanicInfo) -> ! {
     loop {}
 }
 
+/// Runs the test suite.
+///
+/// # Arguments
+///
+/// * `tests` - A slice of test functions to run.
 #[cfg(test)]
 fn test_runner(tests: &[&dyn Fn()]) {
     serial_println!("Running {} tests", tests.len());
@@ -378,6 +457,11 @@ fn test_runner(tests: &[&dyn Fn()]) {
     exit_qemu(QemuExitCode::Success);
 }
 
+/// Runs memory tests.
+///
+/// # Returns
+///
+/// A `TestResult` indicating success or failure.
 #[cfg(test)]
 fn run_memory_tests() -> TestResult {
     use tests::memory::heap_tests;
@@ -416,6 +500,7 @@ fn run_memory_tests() -> TestResult {
     }
 }
 
+/// Enum representing QEMU exit codes.
 #[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
@@ -424,6 +509,11 @@ pub enum QemuExitCode {
     Failed = 0x11,
 }
 
+/// Exits QEMU with the specified exit code.
+///
+/// # Arguments
+///
+/// * `exit_code` - The `QemuExitCode` to exit with.
 #[cfg(test)]
 pub fn exit_qemu(exit_code: QemuExitCode) -> ! {
     use x86_64::instructions::port::Port;

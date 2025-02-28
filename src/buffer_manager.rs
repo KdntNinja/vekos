@@ -25,6 +25,7 @@ use x86_64::VirtAddr;
 const BUFFER_SIZE: usize = 4096;
 const MAX_BUFFERS: usize = 256;
 
+/// Struct representing a buffer.
 #[derive(Debug)]
 pub struct Buffer {
     pub(crate) data: [u8; BUFFER_SIZE],
@@ -48,6 +49,7 @@ impl Clone for Buffer {
     }
 }
 
+/// Struct representing the buffer manager.
 #[derive(Debug)]
 pub struct BufferManager {
     buffers: VecDeque<Buffer>,
@@ -56,6 +58,7 @@ pub struct BufferManager {
     state_hash: AtomicU64,
 }
 
+/// Struct representing buffer statistics.
 #[derive(Debug, Default)]
 pub struct BufferStats {
     hits: AtomicU64,
@@ -65,6 +68,15 @@ pub struct BufferStats {
 }
 
 impl Buffer {
+    /// Creates a new buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_num` - The block number associated with the buffer.
+    ///
+    /// # Returns
+    ///
+    /// A new `Buffer` instance.
     pub fn new(block_num: u64) -> Self {
         Self {
             data: [0; BUFFER_SIZE],
@@ -76,30 +88,49 @@ impl Buffer {
         }
     }
 
+    /// Pins the buffer.
     pub fn pin(&mut self) {
         self.pinned = true;
     }
 
+    /// Unpins the buffer.
     pub fn unpin(&mut self) {
         self.pinned = false;
     }
 
+    /// Marks the buffer as dirty.
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
     }
 
+    /// Checks if the buffer is dirty.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the buffer is dirty, `false` otherwise.
     pub fn is_dirty(&self) -> bool {
         self.dirty
     }
 
+    /// Gets the data from the buffer.
+    ///
+    /// # Returns
+    ///
+    /// A slice of the buffer data.
     pub fn get_data(&self) -> &[u8] {
         &self.data[..]
     }
 
+    /// Sets the data in the buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_data` - The new data to set in the buffer.
     pub fn set_data(&mut self, new_data: &[u8]) {
         self.data.copy_from_slice(new_data);
     }
 
+    /// Clears the buffer.
     pub fn clear(&mut self) {
         self.data.fill(0);
         self.dirty = false;
@@ -110,6 +141,11 @@ impl Buffer {
 }
 
 impl BufferManager {
+    /// Creates a new buffer manager.
+    ///
+    /// # Returns
+    ///
+    /// A new `BufferManager` instance.
     pub fn new() -> Self {
         serial_println!("BufferManager: Starting initialization");
 
@@ -134,6 +170,11 @@ impl BufferManager {
         }
     }
 
+    /// Grows the buffer pool.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure.
     fn grow_buffer_pool(&mut self) -> Result<(), &'static str> {
         if self.free_buffers.len() >= MAX_BUFFERS {
             return Err("Maximum buffer pool size reached");
@@ -149,6 +190,15 @@ impl BufferManager {
         Ok(())
     }
 
+    /// Gets a buffer for a specific block number.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_num` - The block number to get the buffer for.
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing a mutable reference to the buffer if found, or `None` if not found.
     pub fn get_buffer(&mut self, block_num: u64) -> Option<&mut Buffer> {
         serial_println!("BufferManager: Attempting to get buffer {}", block_num);
 
@@ -184,6 +234,11 @@ impl BufferManager {
         }
     }
 
+    /// Releases a buffer for a specific block number.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_num` - The block number to release the buffer for.
     pub fn release_buffer(&mut self, block_num: u64) {
         if let Some(pos) = self.buffers.iter().position(|b| b.block_num == block_num) {
             let mut buffer = self.buffers.remove(pos).unwrap();
@@ -195,6 +250,7 @@ impl BufferManager {
         }
     }
 
+    /// Flushes all dirty buffers.
     pub fn flush_all(&mut self) {
         let dirty_buffers: Vec<_> = self
             .buffers
@@ -208,6 +264,12 @@ impl BufferManager {
         }
     }
 
+    /// Flushes a specific buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_num` - The block number of the buffer to flush.
+    /// * `data` - The data to flush.
     fn flush_buffer(&mut self, block_num: u64, data: [u8; BUFFER_SIZE]) {
         let block_addr = block_num * BUFFER_SIZE as u64;
         unsafe {
@@ -220,6 +282,11 @@ impl BufferManager {
         self.stats.writes.fetch_add(1, Ordering::Relaxed);
     }
 
+    /// Gets the buffer manager statistics.
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing the hit count, miss count, eviction count, and write count.
     pub fn get_stats(&self) -> (u64, u64, u64, u64) {
         (
             self.stats.hits.load(Ordering::Relaxed),
@@ -229,6 +296,7 @@ impl BufferManager {
         )
     }
 
+    /// Evicts one buffer.
     pub fn evict_one(&mut self) {
         if let Some(idx) = self
             .buffers
@@ -252,9 +320,18 @@ impl BufferManager {
 }
 
 impl Verifiable for BufferManager {
+    /// Generates a proof for a given operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `operation` - The operation to generate a proof for.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the generated `OperationProof` or a `VerificationError`.
     fn generate_proof(
         &self,
-        operation: crate::verification::Operation,
+        _operation: crate::verification::Operation,
     ) -> Result<OperationProof, VerificationError> {
         let prev_state = self.state_hash();
 
@@ -282,11 +359,25 @@ impl Verifiable for BufferManager {
         })
     }
 
+    /// Verifies a given proof.
+    ///
+    /// # Arguments
+    ///
+    /// * `proof` - The proof to verify.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating whether the proof is valid or a `VerificationError`.
     fn verify_proof(&self, proof: &OperationProof) -> Result<bool, VerificationError> {
         let current_state = self.state_hash();
         Ok(current_state == proof.new_state)
     }
 
+    /// Retrieves the current state hash.
+    ///
+    /// # Returns
+    ///
+    /// The current state hash.
     fn state_hash(&self) -> Hash {
         Hash(self.state_hash.load(Ordering::SeqCst))
     }

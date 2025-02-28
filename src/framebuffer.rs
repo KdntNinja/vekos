@@ -41,12 +41,14 @@ const VGA_INSTAT_READ: u16 = 0x3DA;
 
 static mut BACK_BUFFER: [u8; VGA_BUFFER_SIZE] = [0; VGA_BUFFER_SIZE];
 
+/// Represents a single pixel with an index.
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub struct Pixel {
     pub index: u8,
 }
 
+/// Represents a framebuffer for VGA graphics.
 pub struct Framebuffer {
     front_buffer: *mut u8,
     back_buffer: *mut u8,
@@ -57,6 +59,7 @@ unsafe impl Send for Framebuffer {}
 unsafe impl Sync for Framebuffer {}
 
 impl Framebuffer {
+    /// Creates a new framebuffer instance.
     pub fn new() -> Self {
         unsafe {
             Self {
@@ -67,10 +70,18 @@ impl Framebuffer {
         }
     }
 
+    /// Enables double buffering for the framebuffer.
     pub fn enable_double_buffering(&mut self) {
         self.double_buffering = true;
     }
 
+    /// Plots a pixel at the specified (x, y) coordinates.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` - The x-coordinate of the pixel.
+    /// * `y` - The y-coordinate of the pixel.
+    /// * `pixel` - The pixel to plot.
     pub fn plot_pixel(&mut self, x: usize, y: usize, pixel: Pixel) {
         if x >= VGA_WIDTH || y >= VGA_HEIGHT {
             return;
@@ -100,6 +111,14 @@ impl Framebuffer {
         }
     }
 
+    /// Draws a circle with the specified center and radius.
+    ///
+    /// # Arguments
+    ///
+    /// * `center_x` - The x-coordinate of the circle's center.
+    /// * `center_y` - The y-coordinate of the circle's center.
+    /// * `radius` - The radius of the circle.
+    /// * `pixel` - The pixel to use for drawing the circle.
     pub fn draw_circle(&mut self, center_x: usize, center_y: usize, radius: usize, pixel: Pixel) {
         for y in 0..self.height() {
             for x in 0..self.width() {
@@ -114,6 +133,14 @@ impl Framebuffer {
         }
     }
 
+    /// Draws a character at the specified (x, y) coordinates.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` - The x-coordinate of the character's top-left corner.
+    /// * `y` - The y-coordinate of the character's top-left corner.
+    /// * `c` - The character to draw.
+    /// * `pixel` - The pixel to use for drawing the character.
     pub fn draw_char(&mut self, x: usize, y: usize, c: char, pixel: Pixel) {
         let font = crate::font::FONT.lock();
         let glyph = font.get_glyph(c);
@@ -127,6 +154,14 @@ impl Framebuffer {
         }
     }
 
+    /// Prints a string at the specified (x, y) coordinates.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` - The x-coordinate of the string's starting position.
+    /// * `y` - The y-coordinate of the string's starting position.
+    /// * `text` - The string to print.
+    /// * `pixel` - The pixel to use for drawing the string.
     pub fn print_string(&mut self, x: usize, y: usize, text: &str, pixel: Pixel) {
         let mut current_x = x;
         for c in text.chars() {
@@ -138,6 +173,11 @@ impl Framebuffer {
         }
     }
 
+    /// Clears the framebuffer with the specified pixel.
+    ///
+    /// # Arguments
+    ///
+    /// * `pixel` - The pixel to use for clearing the framebuffer.
     pub fn clear(&mut self, pixel: Pixel) {
         serial_println!("Starting clear with color index {:#x}", pixel.index);
 
@@ -160,6 +200,15 @@ impl Framebuffer {
         serial_println!("Clear operation completed");
     }
 
+    /// Draws a rectangle at the specified (x, y) coordinates with the given width and height.
+    ///
+    /// # Arguments
+    ///
+    /// * `x` - The x-coordinate of the rectangle's top-left corner.
+    /// * `y` - The y-coordinate of the rectangle's top-left corner.
+    /// * `width` - The width of the rectangle.
+    /// * `height` - The height of the rectangle.
+    /// * `pixel` - The pixel to use for drawing the rectangle.
     pub fn draw_rect(&mut self, x: usize, y: usize, width: usize, height: usize, pixel: Pixel) {
         for cy in y..core::cmp::min(y + height, VGA_HEIGHT) {
             for cx in x..core::cmp::min(x + width, VGA_WIDTH) {
@@ -168,6 +217,7 @@ impl Framebuffer {
         }
     }
 
+    /// Swaps the front and back buffers if double buffering is enabled.
     pub fn swap_buffers(&mut self) {
         if !self.double_buffering {
             return;
@@ -181,16 +231,19 @@ impl Framebuffer {
         }
     }
 
+    /// Returns the width of the framebuffer.
     pub fn width(&self) -> usize {
         VGA_WIDTH
     }
 
+    /// Returns the height of the framebuffer.
     pub fn height(&self) -> usize {
         VGA_HEIGHT
     }
 }
 
 lazy_static! {
+    /// Global framebuffer instance protected by a mutex.
     pub static ref FRAMEBUFFER: Mutex<Option<Framebuffer>> = Mutex::new(None);
 }
 
@@ -216,6 +269,7 @@ const VGA_DAC_DATA: u16 = 0x3C9;
 const VGA_DAC_READ_INDEX: u16 = 0x3C7;
 const VGA_DAC_STATE: u16 = 0x3C7;
 
+/// Prints the current state of various VGA registers for debugging purposes.
 fn debug_vga_state() {
     unsafe {
         let mut crtc_index = Port::<u8>::new(VGA_CRTC_INDEX);
@@ -250,6 +304,7 @@ fn debug_vga_state() {
     }
 }
 
+/// Initializes the VGA DAC with a predefined palette.
 fn init_vga_dac() {
     unsafe {
         serial_println!("Initializing VGA DAC...");
@@ -287,6 +342,7 @@ fn init_vga_dac() {
     }
 }
 
+/// Verifies the current VGA mode settings.
 fn verify_mode_13h() {
     unsafe {
         let mut seq_index = Port::<u8>::new(VGA_SEQ_INDEX);
@@ -304,6 +360,7 @@ fn verify_mode_13h() {
     }
 }
 
+/// Checks the current status of various VGA registers.
 fn check_vga_status() {
     unsafe {
         let _misc_port = Port::<u8>::new(VGA_MISC_WRITE);
@@ -334,6 +391,7 @@ fn check_vga_status() {
     }
 }
 
+/// Resets the VGA to a known state.
 fn reset_vga() {
     unsafe {
         serial_println!("Starting VGA reset sequence...");
@@ -385,6 +443,7 @@ fn reset_vga() {
     }
 }
 
+/// Verifies the CRTC offset register.
 fn verify_crtc_offset() {
     unsafe {
         let mut crtc_index = Port::<u8>::new(VGA_CRTC_INDEX);
@@ -399,6 +458,7 @@ fn verify_crtc_offset() {
     }
 }
 
+/// Verifies the memory layout of the VGA.
 fn verify_memory_layout() {
     unsafe {
         let mut crtc_index = Port::<u8>::new(VGA_CRTC_INDEX);
@@ -434,71 +494,37 @@ fn verify_memory_layout() {
 //             port.read();
 //             while port.read() & 0x08 == 0 {}
 //         }
-//        
+//
 //         fb.double_buffering = true;
-//        
-//         fb.clear(WHITE); 
+//
+//         fb.clear(WHITE);
 //         let center_x = fb.width() / 2;
 //         let center_y = fb.height() / 2;
 //         let radius = 50;
 //         fb.draw_circle(center_x, center_y, radius, RED);
-//         
+//
 //         fb.swap_buffers();
 //         fb.double_buffering = false;
 //         serial_println!("Circle test completed");
 //     }
 // }
 
+/// VGA mode 13h miscellaneous output register value.
 const MODE_13H_MISC: u8 = 0x63;
 
-const MODE_13H_SEQ: &[u8] = &[
-    0x03,
-    0x01,
-    0x0F,
-    0x00,
-    0x0E,
-];
+/// VGA mode 13h sequencer register values.
+const MODE_13H_SEQ: &[u8] = &[0x03, 0x01, 0x0F, 0x00, 0x0E];
 
+/// VGA mode 13h CRTC register values.
 const MODE_13H_CRTC: &[u8] = &[
-    0x5F,
-    0x4F,
-    0x50, 
-    0x82,
-    0x54,
-    0x80,
-    0xBF,
-    0x1F,
-    0x00,
-    0x41,
-    0x00,
-    0x00,
-    0x00,
-    0x00,
-    0x00,
-    0x00,
-    0x9C,
-    0x8E,
-    0x8F,
-    0x28,
-    0x40,
-    0x96,
-    0xB9,
-    0xA3,
-    0xFF,
+    0x5F, 0x4F, 0x50, 0x82, 0x54, 0x80, 0xBF, 0x1F, 0x00, 0x41, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x9C, 0x8E, 0x8F, 0x28, 0x40, 0x96, 0xB9, 0xA3, 0xFF,
 ];
 
-const MODE_13H_GC: &[u8] = &[
-    0x00,
-    0x00,
-    0x00,
-    0x00,
-    0x00,
-    0x40,
-    0x05,
-    0x0F,
-    0xFF,
-];
+/// VGA mode 13h graphics controller register values.
+const MODE_13H_GC: &[u8] = &[0x00, 0x00, 0x00, 0x00, 0x00, 0x40, 0x05, 0x0F, 0xFF];
 
+/// Writes the VGA registers with the mode 13h values.
 fn write_registers() {
     unsafe {
         let mut misc_port = Port::<u8>::new(VGA_MISC_WRITE);
@@ -558,6 +584,7 @@ fn write_registers() {
     }
 }
 
+/// Sets up the CRTC timing for VGA mode 13h.
 fn setup_crtc_timing() {
     unsafe {
         let mut crtc_index = Port::<u8>::new(VGA_CRTC_INDEX);
@@ -599,6 +626,7 @@ fn setup_crtc_timing() {
     }
 }
 
+/// Sets the VGA to mode 13h.
 fn set_mode_13h() {
     unsafe {
         serial_println!("Setting VGA Mode 13h...");
@@ -617,12 +645,7 @@ fn set_mode_13h() {
             seq_data.write(0x00);
         }
 
-        let seq_values: [(u8, u8); 4] = [
-            (0x01, 0x01),
-            (0x02, 0x0F),
-            (0x03, 0x00),
-            (0x04, 0x08),
-        ];
+        let seq_values: [(u8, u8); 4] = [(0x01, 0x01), (0x02, 0x0F), (0x03, 0x00), (0x04, 0x08)];
 
         for (index, value) in seq_values.iter() {
             seq_index.write(*index);
@@ -687,6 +710,19 @@ fn set_mode_13h() {
     verify_crtc_offset();
 }
 
+/// Initializes the VGA and sets it to mode 13h.
+/// This function performs the following steps:
+/// 1. Prints the initial VGA state.
+/// 2. Resets the VGA.
+/// 3. Prints the VGA state after reset.
+/// 4. Sets the VGA to mode 13h.
+/// 5. Prints the VGA state after setting mode 13h.
+/// 6. Writes the VGA registers.
+/// 7. Verifies the mode 13h settings.
+/// 8. Prints the final VGA state.
+/// 9. Initializes the VGA DAC.
+/// 10. Creates a new framebuffer instance and stores it in the global framebuffer mutex.
+// 11. Optionally, runs the `test_solid_color` function (currently commented out).
 pub fn init() {
     serial_println!("Starting VGA initialization...");
 

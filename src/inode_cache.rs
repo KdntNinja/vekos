@@ -26,8 +26,10 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 use x86_64::VirtAddr;
 
+/// The maximum number of cache entries.
 const MAX_CACHE_ENTRIES: usize = 1024;
 
+/// Represents the status of a cache entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum CacheEntryStatus {
     Clean,
@@ -35,6 +37,7 @@ enum CacheEntryStatus {
     InUse,
 }
 
+/// Represents a cache entry.
 #[derive(Debug)]
 struct CacheEntry {
     inode: Inode,
@@ -43,6 +46,7 @@ struct CacheEntry {
     reference_count: u32,
 }
 
+/// Represents cache statistics.
 #[derive(Debug, Default)]
 pub struct CacheStats {
     hits: AtomicU64,
@@ -50,6 +54,7 @@ pub struct CacheStats {
     evictions: AtomicU64,
 }
 
+/// Represents an inode cache.
 #[derive(Debug)]
 pub struct InodeCache {
     entries: BTreeMap<u32, CacheEntry>,
@@ -60,6 +65,11 @@ pub struct InodeCache {
 }
 
 impl InodeCache {
+    /// Creates a new `InodeCache` instance.
+    ///
+    /// # Returns
+    ///
+    /// * `InodeCache` - A new instance of `InodeCache`.
     pub fn new() -> Self {
         Self {
             entries: BTreeMap::new(),
@@ -70,6 +80,15 @@ impl InodeCache {
         }
     }
 
+    /// Retrieves an inode from the cache.
+    ///
+    /// # Arguments
+    ///
+    /// * `inode_num` - The inode number to retrieve.
+    ///
+    /// # Returns
+    ///
+    /// * `Option<&mut Inode>` - A mutable reference to the inode if found, otherwise `None`.
     pub fn get_inode(&mut self, inode_num: u32) -> Option<&mut Inode> {
         if let Some(entry) = self.entries.get_mut(&inode_num) {
             entry.last_access = self.access_counter.fetch_add(1, Ordering::SeqCst);
@@ -84,6 +103,11 @@ impl InodeCache {
         }
     }
 
+    /// Updates the access time of an inode in the cache.
+    ///
+    /// # Arguments
+    ///
+    /// * `inode_num` - The inode number to update.
     pub fn touch_access_time(&mut self, inode_num: u32) {
         if let Some(entry) = self.entries.get_mut(&inode_num) {
             entry.inode.access_time = crate::time::Timestamp::now().secs;
@@ -91,6 +115,11 @@ impl InodeCache {
         }
     }
 
+    /// Updates the modification time of an inode in the cache.
+    ///
+    /// # Arguments
+    ///
+    /// * `inode_num` - The inode number to update.
     pub fn touch_modify_time(&mut self, inode_num: u32) {
         if let Some(entry) = self.entries.get_mut(&inode_num) {
             entry.inode.modify_time = crate::time::Timestamp::now().secs;
@@ -98,6 +127,12 @@ impl InodeCache {
         }
     }
 
+    /// Inserts a new inode into the cache.
+    ///
+    /// # Arguments
+    ///
+    /// * `inode_num` - The inode number to insert.
+    /// * `inode` - The inode to insert.
     pub fn insert_inode(&mut self, inode_num: u32, inode: Inode) {
         if self.entries.len() >= self.max_entries {
             self.evict_one();
@@ -113,12 +148,22 @@ impl InodeCache {
         self.entries.insert(inode_num, entry);
     }
 
+    /// Marks an inode as dirty in the cache.
+    ///
+    /// # Arguments
+    ///
+    /// * `inode_num` - The inode number to mark as dirty.
     pub fn mark_dirty(&mut self, inode_num: u32) {
         if let Some(entry) = self.entries.get_mut(&inode_num) {
             entry.status = CacheEntryStatus::Dirty;
         }
     }
 
+    /// Releases an inode from the cache.
+    ///
+    /// # Arguments
+    ///
+    /// * `inode_num` - The inode number to release.
     pub fn release_inode(&mut self, inode_num: u32) {
         if let Some(entry) = self.entries.get_mut(&inode_num) {
             entry.reference_count = entry.reference_count.saturating_sub(1);
@@ -128,6 +173,7 @@ impl InodeCache {
         }
     }
 
+    /// Evicts one clean inode from the cache.
     pub fn evict_one(&mut self) {
         if let Some((&inode_num, _)) = self
             .entries
@@ -140,6 +186,11 @@ impl InodeCache {
         }
     }
 
+    /// Flushes all dirty inodes from the cache.
+    ///
+    /// # Returns
+    ///
+    /// * `Vec<(u32, Inode)>` - A vector of inode numbers and their corresponding inodes.
     pub fn flush(&mut self) -> Vec<(u32, Inode)> {
         let mut dirty_inodes = Vec::new();
 
@@ -155,6 +206,11 @@ impl InodeCache {
         dirty_inodes
     }
 
+    /// Retrieves cache statistics.
+    ///
+    /// # Returns
+    ///
+    /// * `(u64, u64, u64)` - A tuple containing the number of hits, misses, and evictions.
     pub fn get_stats(&self) -> (u64, u64, u64) {
         (
             self.stats.hits.load(Ordering::Relaxed),
@@ -165,6 +221,16 @@ impl InodeCache {
 }
 
 impl Verifiable for InodeCache {
+    /// Generates a proof for a given filesystem operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `operation` - The filesystem operation to generate a proof for.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(OperationProof)` if the proof was generated successfully.
+    /// * `Err(VerificationError)` if an error occurred during proof generation.
     fn generate_proof(&self, operation: Operation) -> Result<OperationProof, VerificationError> {
         let prev_state = Hash(self.state_hash.load(Ordering::SeqCst));
 
@@ -205,6 +271,17 @@ impl Verifiable for InodeCache {
         })
     }
 
+    /// Verifies a given proof.
+    ///
+    /// # Arguments
+    ///
+    /// * `proof` - The proof to verify.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` if the proof is valid.
+    /// * `Ok(false)` if the proof is invalid.
+    /// * `Err(VerificationError)` if an error occurred during verification.
     fn verify_proof(&self, proof: &OperationProof) -> Result<bool, VerificationError> {
         let mut entry_hashes = Vec::new();
         for (inode_num, entry) in &self.entries {
@@ -223,6 +300,11 @@ impl Verifiable for InodeCache {
         Ok(current_hash == proof.new_state)
     }
 
+    /// Returns the current state hash of the inode cache.
+    ///
+    /// # Returns
+    ///
+    /// * `Hash` - The current state hash.
     fn state_hash(&self) -> Hash {
         Hash(self.state_hash.load(Ordering::SeqCst))
     }

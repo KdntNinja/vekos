@@ -31,6 +31,7 @@ use lazy_static::lazy_static;
 use spin::Mutex;
 use x86_64::instructions::segmentation::Segment;
 
+/// Enum representing the different stages of the boot process.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BootStage {
     Initial,
@@ -46,6 +47,7 @@ pub enum BootStage {
     Complete,
 }
 
+/// Struct representing a proof of a boot stage.
 #[derive(Debug, Clone)]
 pub struct BootProof {
     pub stage: BootStage,
@@ -54,12 +56,14 @@ pub struct BootProof {
     pub verified_components: Vec<VerifiedComponent>,
 }
 
+/// Struct representing a verified component.
 #[derive(Debug, Clone)]
 pub struct VerifiedComponent {
     pub component_type: ComponentType,
     pub hash: Hash,
 }
 
+/// Enum representing the type of verified component.
 #[derive(Debug, Clone)]
 pub enum ComponentType {
     GDT,
@@ -70,6 +74,7 @@ pub enum ComponentType {
     Scheduler,
 }
 
+/// Struct representing the boot verification process.
 #[derive(Debug)]
 pub struct BootVerification {
     pub current_stage: BootStage,
@@ -82,6 +87,11 @@ pub struct BootVerification {
 }
 
 impl BootVerification {
+    /// Creates a new `BootVerification` instance.
+    ///
+    /// # Returns
+    ///
+    /// A new `BootVerification` instance.
     pub const fn new() -> Self {
         Self {
             current_stage: BootStage::Initial,
@@ -94,6 +104,11 @@ impl BootVerification {
         }
     }
 
+    /// Logs an error during the boot process.
+    ///
+    /// # Arguments
+    ///
+    /// * `error` - The error message to log.
     pub fn log_error(&self, error: &'static str) {
         let index = self.error_count.fetch_add(1, Ordering::SeqCst) as usize;
         if index < 32 {
@@ -103,6 +118,11 @@ impl BootVerification {
         serial_println!("Boot error at stage {:?}: {}", self.current_stage, error);
     }
 
+    /// Attempts to clone the current `BootVerification` instance.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the cloned `BootVerification` instance or a `VerificationError`.
     fn try_clone(&self) -> Result<Self, VerificationError> {
         let mut new_errors = [None; 32];
         let errors = self.errors.lock();
@@ -121,6 +141,15 @@ impl BootVerification {
         })
     }
 
+    /// Verifies a boot stage and generates a proof.
+    ///
+    /// # Arguments
+    ///
+    /// * `stage` - The boot stage to verify.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the generated `OperationProof` or a `VerificationError`.
     pub fn verify_stage_vmk(
         &mut self,
         stage: BootStage,
@@ -149,6 +178,15 @@ impl BootVerification {
         Ok(proof)
     }
 
+    /// Generates a proof for a boot stage.
+    ///
+    /// # Arguments
+    ///
+    /// * `stage` - The boot stage to generate a proof for.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the generated `BootProof` or a `VerificationError`.
     fn generate_stage_proof(&self, stage: BootStage) -> Result<BootProof, VerificationError> {
         if !crate::allocator::HEAP_INITIALIZED.load(Ordering::SeqCst) {
             let stage_hash = match stage {
@@ -232,10 +270,20 @@ impl BootVerification {
         })
     }
 
+    /// Starts the boot process.
     pub fn start_boot(&mut self) {
-        self.boot_start_time = crate::tsc::read_tsc();
+        self.boot_start_time = tsc::read_tsc();
     }
 
+    /// Verifies a boot stage.
+    ///
+    /// # Arguments
+    ///
+    /// * `stage` - The boot stage to verify.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure.
     pub fn verify_stage(&mut self, stage: BootStage) -> Result<(), &'static str> {
         let verification_result = match stage {
             BootStage::GDTLoaded => self.verify_gdt().map(|_| ()),
@@ -246,7 +294,7 @@ impl BootVerification {
         };
 
         if let Ok(_) = verification_result {
-            let timestamp = crate::tsc::read_tsc();
+            let timestamp = tsc::read_tsc();
             self.stage_timestamps[stage as usize] = Some(timestamp);
             self.current_stage = stage;
 
@@ -261,6 +309,11 @@ impl BootVerification {
         }
     }
 
+    /// Verifies the Global Descriptor Table (GDT).
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the hash of the GDT or a `VerificationError`.
     fn verify_gdt(&self) -> Result<Hash, VerificationError> {
         use x86_64::instructions::segmentation::{CS, DS};
 
@@ -271,10 +324,15 @@ impl BootVerification {
         let gdt = &crate::gdt::GDT.0;
         Ok(hash::hash_memory(
             VirtAddr::from_ptr(gdt as *const _),
-            core::mem::size_of_val(gdt),
+            size_of_val(gdt),
         ))
     }
 
+    /// Verifies the Interrupt Descriptor Table (IDT).
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the hash of the IDT or a `VerificationError`.
     fn verify_idt(&self) -> Result<Hash, VerificationError> {
         use x86_64::instructions::tables;
 
@@ -286,6 +344,11 @@ impl BootVerification {
         Ok(hash::hash_memory(idtr.base, idtr.limit as usize))
     }
 
+    /// Verifies the memory.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the hash of the memory or a `VerificationError`.
     fn verify_memory(&self) -> Result<Hash, VerificationError> {
         let (frame, _) = x86_64::registers::control::Cr3::read();
 
@@ -295,6 +358,11 @@ impl BootVerification {
         ))
     }
 
+    /// Verifies the heap.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the hash of the heap or a `VerificationError`.
     fn verify_heap(&self) -> Result<Hash, VerificationError> {
         use crate::allocator::{HEAP_SIZE, HEAP_START};
 
@@ -304,12 +372,26 @@ impl BootVerification {
         ))
     }
 
+    /// Retrieves the boot time.
+    ///
+    /// # Returns
+    ///
+    /// The boot time in TSC cycles.
     pub fn get_boot_time(&self) -> u64 {
-        crate::tsc::read_tsc() - self.boot_start_time
+        tsc::read_tsc() - self.boot_start_time
     }
 }
 
 impl Verifiable for BootVerification {
+    /// Generates a proof for a given operation.
+    ///
+    /// # Arguments
+    ///
+    /// * `operation` - The operation to generate a proof for.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the generated `OperationProof` or a `VerificationError`.
     fn generate_proof(&self, operation: Operation) -> Result<OperationProof, VerificationError> {
         match operation {
             Operation::Boot { stage } => {
@@ -322,6 +404,15 @@ impl Verifiable for BootVerification {
         }
     }
 
+    /// Verifies a given proof.
+    ///
+    /// # Arguments
+    ///
+    /// * `proof` - The proof to verify.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating whether the proof is valid or a `VerificationError`.
     fn verify_proof(&self, proof: &OperationProof) -> Result<bool, VerificationError> {
         match &proof.data {
             ProofData::Boot(boot_proof) => {
@@ -333,11 +424,17 @@ impl Verifiable for BootVerification {
         }
     }
 
+    /// Retrieves the current state hash.
+    ///
+    /// # Returns
+    ///
+    /// The current state hash.
     fn state_hash(&self) -> Hash {
         Hash(self.state_hash.load(Ordering::SeqCst))
     }
 }
 
+/// Global instance of `BootVerification`.
 lazy_static! {
     pub static ref BOOT_VERIFICATION: Mutex<BootVerification> = Mutex::new(BootVerification::new());
 }

@@ -17,25 +17,46 @@
 use lazy_static::lazy_static;
 use spin::Mutex;
 
+/// The font data loaded from a binary file.
 const FONT_DATA: &[u8; 4096] = include_bytes!("../assets/font8x16.bin");
+
+/// The height of each glyph in the font.
 const GLYPH_HEIGHT: usize = 16;
+
+/// The width of each glyph in the font.
 const GLYPH_WIDTH: usize = 8;
 
+/// Struct representing a font.
 pub struct Font {
     data: &'static [u8; 4096],
 }
 
 impl Font {
+    /// Creates a new `Font` instance.
+    ///
+    /// # Returns
+    ///
+    /// A new `Font` instance.
     pub fn new() -> Self {
         Self { data: FONT_DATA }
     }
 
+    /// Retrieves the glyph data for a given character.
+    ///
+    /// # Arguments
+    ///
+    /// * `c` - The character to retrieve the glyph for.
+    ///
+    /// # Returns
+    ///
+    /// A slice of bytes representing the glyph data.
     pub fn get_glyph(&self, c: char) -> &[u8] {
         let idx = c as usize * GLYPH_HEIGHT;
         &self.data[idx..idx + GLYPH_HEIGHT]
     }
 }
 
+/// Global instance of `Font` protected by a `Mutex`.
 lazy_static! {
     pub static ref FONT: Mutex<Font> = Mutex::new(Font::new());
 }

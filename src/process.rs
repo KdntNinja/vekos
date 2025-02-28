@@ -497,7 +497,7 @@ impl Process {
         let user_rip = self.context.regs.rip;
         let user_rsp = self.context.regs.rsp;
         let user_rflags_with_if = user_rflags | 0x200;
-    
+
         unsafe {
             x86_64::instructions::interrupts::disable();
 
@@ -511,9 +511,9 @@ impl Process {
                 "mov rcx, {}",
                 "mov r11, {}",
                 "mov rsp, {}",
-    
+
                 "swapgs",
-    
+
                 "sysretq",
                 in(reg) user_rip,
                 in(reg) user_rflags_with_if,
@@ -581,22 +581,22 @@ impl Process {
         for allocation in &self.memory.allocations {
             state_components.push(hash::hash_memory(allocation.address, allocation.size));
         }
-        
+
         state_components.push(hash::hash_memory(
             VirtAddr::new(&self.cpu_usage_history as *const _ as u64),
-            core::mem::size_of::<[u32; 8]>()
+            core::mem::size_of::<[u32; 8]>(),
         ));
-        
+
         state_components.push(hash::hash_memory(
             VirtAddr::new(&self.scheduler_decisions as *const _ as u64),
-            core::mem::size_of::<[u8; 16]>()
+            core::mem::size_of::<[u8; 16]>(),
         ));
-        
+
         state_components.push(hash::hash_memory(
             VirtAddr::new(&self.ml_reward_history as *const _ as u64),
-            core::mem::size_of::<[i32; 4]>()
+            core::mem::size_of::<[i32; 4]>(),
         ));
-        
+
         hash::combine_hashes(&state_components)
     }
 

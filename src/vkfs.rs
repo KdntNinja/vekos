@@ -14,40 +14,40 @@
 * limitations under the License.
 */
 
-use crate::verification::{Hash, OperationProof, VerificationError, Operation};
-use crate::verification::{FSProof, FSOpType, ProofData};
-use core::sync::atomic::{AtomicU64, Ordering};
+use crate::block_cache::BlockCache;
+use crate::buffer_manager::BufferManager;
+use crate::crypto::CRYPTO_VERIFIER;
+use crate::format;
+use crate::fs::FSOperation;
+use crate::hash;
 use crate::hash::hash_memory;
-use crate::time::Timestamp;
-use alloc::vec;
-use crate::Verifiable;
+use crate::inode_cache::InodeCache;
 use crate::key_store;
-use alloc::vec::Vec;
+use crate::merkle_tree::DirectoryMerkleTree;
 use crate::merkle_tree::HashChainVerifier;
 use crate::proof_storage::PROOF_STORAGE;
-use crate::hash;
-use core::sync::atomic::AtomicBool;
-use alloc::sync::Arc;
-use crate::verification::AtomicTransition;
-use crate::format;
-use crate::crypto::CRYPTO_VERIFIER;
-use crate::fs::FSOperation;
-use crate::buffer_manager::BufferManager;
-use crate::tsc;
-use alloc::string::String;
-use crate::inode_cache::InodeCache;
 use crate::serial_println;
-use crate::block_cache::BlockCache;
-use crate::merkle_tree::DirectoryMerkleTree;
-use crate::verification::StateTransitionRegistry;
+use crate::time::Timestamp;
+use crate::tsc;
+use crate::verification::AtomicTransition;
 use crate::verification::StateTransition;
-use crate::verification::STATE_TRANSITIONS;
-use crate::VERIFICATION_REGISTRY;
+use crate::verification::StateTransitionRegistry;
 use crate::verification::TransitionType;
-use x86_64::VirtAddr;
+use crate::verification::STATE_TRANSITIONS;
+use crate::verification::{FSOpType, FSProof, ProofData};
+use crate::verification::{Hash, Operation, OperationProof, VerificationError};
+use crate::Verifiable;
+use crate::VERIFICATION_REGISTRY;
+use alloc::string::String;
+use alloc::sync::Arc;
+use alloc::vec;
+use alloc::vec::Vec;
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::{AtomicU64, Ordering};
 use spin::Mutex;
+use x86_64::VirtAddr;
 
-const VKFS_MAGIC: u32 = 0x564B4653; 
+const VKFS_MAGIC: u32 = 0x564B4653;
 const VKFS_VERSION: u32 = 1;
 const DEFAULT_BLOCK_SIZE: u32 = 4096;
 
@@ -483,7 +483,7 @@ impl Superblock {
         let mut verifier = CRYPTO_VERIFIER.lock();
         verifier.set_verification_key(&verification_key);
         drop(verifier);
-    
+
         let mut sb = Self {
             magic: VKFS_MAGIC,
             version: VKFS_VERSION,

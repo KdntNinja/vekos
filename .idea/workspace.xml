@@ -9,6 +9,35 @@
   <component name="ChangeListManager">
     <list default="true" id="0822aa5c-2a78-48c7-9ac4-e1af1d5e7cdc" name="Changes" comment="Updated .gitignore">
       <changelist_data name="KaidenSmith" email="kdntninja-2010@proton.me" automatic="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/allocator.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/allocator.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/block_cache.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/block_cache.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/boot_splash.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/boot_splash.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/boot_verification.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/boot_verification.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/buddy_allocator.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/buddy_allocator.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/buffer_manager.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/buffer_manager.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/crypto.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/crypto.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/elf.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/elf.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/font.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/font.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/framebuffer.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/framebuffer.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/fs.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/fs.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/gdt.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/gdt.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/hash.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/hash.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/interrupts.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/interrupts.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/key_store.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/key_store.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/main.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/operation_proofs.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/operation_proofs.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/process.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/process.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/scheduler.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/scheduler.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/scheduler_ml.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/scheduler_ml.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/shell/commands/ls.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/shell/commands/ls.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/shell/display.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/shell/display.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/shell/executor.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/shell/executor.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/shell/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/shell/mod.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/shell/parser.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/shell/parser.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/syscall.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/syscall.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/verification.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/verification.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/vkfs.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/vkfs.rs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -57,6 +86,7 @@
   <component name="PropertiesComponent">{
   &quot;keyToString&quot;: {
     &quot;Cargo.Run vekos.executor&quot;: &quot;Run&quot;,
+    &quot;Cargo.Test vekos.executor&quot;: &quot;Run&quot;,
     &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
     &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
     &quot;RunOnceActivity.rust.reset.selective.auto.import&quot;: &quot;true&quot;,
@@ -96,6 +126,7 @@
       </method>
     </configuration>
     <configuration name="Test vekos" type="CargoCommandRunConfiguration" factoryName="Cargo Command">
+      <option name="buildProfileId" value="test" />
       <option name="command" value="test --workspace" />
       <option name="workingDirectory" value="file://$PROJECT_DIR$" />
       <envs />
@@ -128,6 +159,7 @@
       <option name="presentableId" value="Default" />
       <updated>1740597041738</updated>
       <workItem from="1740597043144" duration="468000" />
+      <workItem from="1740767944648" duration="786000" />
     </task>
     <task id="LOCAL-00001" summary="init">
       <option name="closed" value="true" />

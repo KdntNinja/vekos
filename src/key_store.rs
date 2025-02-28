@@ -14,12 +14,10 @@
 * limitations under the License.
 */
 
-use alloc::vec::Vec;
-use spin::Mutex;
-use lazy_static::lazy_static;
+use crate::fs::{FilePermissions, FileSystem, FILESYSTEM};
 use crate::serial_println;
-use alloc::string::String;
-use crate::fs::{FILESYSTEM, FileSystem, FilePermissions};
+use lazy_static::lazy_static;
+use spin::Mutex;
 
 const KEY_STORE_PATH: &str = "/etc/vekos/keys";
 const VERIFICATION_KEY_PATH: &str = "/etc/vekos/keys/verification.key";
@@ -42,25 +40,25 @@ impl KeyStore {
             initialized: false,
         }
     }
-    
+
     pub fn init_early_boot(&mut self) -> Result<(), &'static str> {
         serial_println!("Initializing KeyStore (early boot mode)");
 
         self.generate_keys()?;
         self.initialized = true;
         serial_println!("Generated temporary verification keys for early boot");
-        
+
         Ok(())
     }
 
     pub fn init(&mut self) -> Result<(), &'static str> {
         serial_println!("Initializing key management subsystem");
-        
+
         match self.ensure_key_directory() {
             Ok(_) => serial_println!("Key directories verified/created successfully"),
             Err(e) => serial_println!("Warning: Could not create key directories: {}", e),
         }
-        
+
         if self.initialized {
             if let Err(e) = self.save_keys() {
                 serial_println!("Note: Could not save existing keys: {}", e);
@@ -75,7 +73,7 @@ impl KeyStore {
                 serial_println!("Successfully loaded existing keys");
                 self.initialized = true;
                 return Ok(());
-            },
+            }
             Err(e) => {
                 serial_println!("Could not load existing keys: {}", e);
                 serial_println!("Generating new keypair");
@@ -88,7 +86,7 @@ impl KeyStore {
                 } else {
                     serial_println!("Keys saved to filesystem");
                 }
-                
+
                 self.initialized = true;
                 serial_println!("New keys generated successfully");
                 Ok(())
@@ -105,23 +103,21 @@ impl KeyStore {
                 write: true,
                 execute: true,
             };
-            
+
             match fs.stat(dir) {
                 Ok(_) => {
                     serial_println!("Directory exists: {}", dir);
-                },
-                Err(_) => {
-                    match fs.create_directory(dir, permissions) {
-                        Ok(_) => serial_println!("Created directory: {}", dir),
-                        Err(e) => {
-                            serial_println!("Failed to create directory {}: {:?}", dir, e);
-                            return Err("Failed to create key directory");
-                        }
-                    }
                 }
+                Err(_) => match fs.create_directory(dir, permissions) {
+                    Ok(_) => serial_println!("Created directory: {}", dir),
+                    Err(e) => {
+                        serial_println!("Failed to create directory {}: {:?}", dir, e);
+                        return Err("Failed to create key directory");
+                    }
+                },
             }
         }
-        
+
         Ok(())
     }
 
@@ -134,7 +130,7 @@ impl KeyStore {
                     return Err("Invalid verification key size");
                 }
                 self.verification_key.copy_from_slice(&data);
-            },
+            }
             Err(_) => return Err("Failed to read verification key"),
         }
 
@@ -144,10 +140,10 @@ impl KeyStore {
                     return Err("Invalid signing key size");
                 }
                 self.signing_key.copy_from_slice(&data);
-            },
+            }
             Err(_) => return Err("Failed to read signing key"),
         }
-        
+
         Ok(())
     }
 
@@ -175,7 +171,7 @@ impl KeyStore {
             },
             Err(_) => return Err("Failed to create signing key file"),
         }
-        
+
         Ok(())
     }
 
@@ -186,9 +182,9 @@ impl KeyStore {
             Ok(private_key) => {
                 self.signing_key.copy_from_slice(&private_key);
                 self.verification_key = verifier.get_verification_key()?;
-                
+
                 Ok(())
-            },
+            }
             Err(e) => Err(e),
         }
     }
@@ -197,7 +193,7 @@ impl KeyStore {
         if !self.initialized {
             return Err("KeyStore not initialized");
         }
-        
+
         Ok(self.verification_key)
     }
 
@@ -205,7 +201,7 @@ impl KeyStore {
         if !self.initialized {
             return Err("KeyStore not initialized");
         }
-        
+
         Ok(self.signing_key)
     }
 
@@ -213,7 +209,7 @@ impl KeyStore {
         if !self.initialized {
             return Err("KeyStore not initialized");
         }
-        
+
         let verifier = crate::crypto::CRYPTO_VERIFIER.lock();
         verifier.sign_data(data, &self.signing_key)
     }

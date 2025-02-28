@@ -24,6 +24,7 @@ use x86_64::VirtAddr;
 pub const DOUBLE_FAULT_IST_INDEX: u16 = 0;
 const STACK_SIZE: usize = 4096 * 5;
 
+/// Structure to hold the segment selectors for the GDT.
 #[derive(Debug)]
 pub struct Selectors {
     pub code_selector: SegmentSelector,
@@ -34,6 +35,7 @@ pub struct Selectors {
 }
 
 lazy_static! {
+    /// Task State Segment (TSS) for handling interrupts.
     static ref TSS: TaskStateSegment = {
         let mut tss = TaskStateSegment::new();
         tss.interrupt_stack_table[DOUBLE_FAULT_IST_INDEX as usize] = {
@@ -44,6 +46,8 @@ lazy_static! {
         };
         tss
     };
+
+    /// Global Descriptor Table (GDT) and its selectors.
     pub static ref GDT: (GlobalDescriptorTable, Selectors) = {
         serial_println!("DEBUG: Starting GDT initialization...");
         let mut gdt = GlobalDescriptorTable::new();
@@ -95,6 +99,7 @@ lazy_static! {
     };
 }
 
+/// Initializes the GDT and loads the segment selectors.
 pub fn init() {
     use x86_64::instructions::segmentation::{CS, DS, ES, FS, GS, SS};
     use x86_64::instructions::tables::load_tss;

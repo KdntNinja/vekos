@@ -20,15 +20,22 @@ use spin::Mutex;
 use x86_64::VirtAddr;
 
 lazy_static! {
+    /// Mutex-protected static instance of `CpuFeatures` to detect CPU capabilities.
     static ref CPU_FEATURES: Mutex<CpuFeatures> = Mutex::new(CpuFeatures::detect());
 }
 
+/// Structure to hold detected CPU features.
 struct CpuFeatures {
     has_rdrand: bool,
     has_sha: bool,
 }
 
 impl CpuFeatures {
+    /// Detects CPU features such as RDRAND and SHA extensions.
+    ///
+    /// # Returns
+    ///
+    /// * `CpuFeatures` - A struct containing the detected features.
     fn detect() -> Self {
         let has_rdrand = unsafe { core::arch::x86_64::__cpuid(1).ecx & (1 << 30) != 0 };
         let has_sha = unsafe { core::arch::x86_64::__cpuid(7).ebx & (1 << 29) != 0 };
@@ -39,12 +46,23 @@ impl CpuFeatures {
     }
 }
 
+/// Initializes the CPU features and prints their support status.
 pub fn init() {
     let features = CPU_FEATURES.lock();
     serial_println!("RDRAND support: {}", features.has_rdrand);
     serial_println!("SHA extensions support: {}", features.has_sha);
 }
 
+/// Tries to compute a hardware hash using SHA extensions if available.
+///
+/// # Arguments
+///
+/// * `addr` - The starting virtual address of the memory region to hash.
+/// * `size` - The size of the memory region to hash.
+///
+/// # Returns
+///
+/// * `Option<Hash>` - The computed hash if SHA extensions are available, otherwise `None`.
 fn try_hardware_hash(addr: VirtAddr, size: usize) -> Option<Hash> {
     let features = CPU_FEATURES.lock();
     if features.has_sha {
@@ -74,6 +92,16 @@ fn try_hardware_hash(addr: VirtAddr, size: usize) -> Option<Hash> {
     }
 }
 
+/// Computes the FNV-1a hash for a given memory region.
+///
+/// # Arguments
+///
+/// * `addr` - The starting virtual address of the memory region to hash.
+/// * `size` - The size of the memory region to hash.
+///
+/// # Returns
+///
+/// * `Hash` - The computed FNV-1a hash.
 fn compute_fnv1a_hash(addr: VirtAddr, size: usize) -> Hash {
     const FNV_PRIME: u64 = 1099511628211;
     const FNV_OFFSET: u64 = 14695981039346656037;
@@ -86,7 +114,7 @@ fn compute_fnv1a_hash(addr: VirtAddr, size: usize) -> Hash {
 
     unsafe {
         let ptr = addr.as_ptr::<u8>();
-        
+
         for i in 0..chunks {
             let chunk_ptr = ptr.add(i * CHUNK_SIZE) as *const u64;
             let chunk = *chunk_ptr;
@@ -104,14 +132,33 @@ fn compute_fnv1a_hash(addr: VirtAddr, size: usize) -> Hash {
     Hash(hash)
 }
 
+/// Computes a hash for a given memory region, using hardware acceleration if available.
+///
+/// # Arguments
+///
+/// * `addr` - The starting virtual address of the memory region to hash.
+/// * `size` - The size of the memory region to hash.
+///
+/// # Returns
+///
+/// * `Hash` - The computed hash.
 pub fn hash_memory(addr: VirtAddr, size: usize) -> Hash {
     if let Some(hash) = try_hardware_hash(addr, size) {
         return hash;
     }
-    
+
     compute_fnv1a_hash(addr, size)
 }
 
+/// Combines multiple hashes into a single hash.
+///
+/// # Arguments
+///
+/// * `hashes` - A slice of `Hash` values to combine.
+///
+/// # Returns
+///
+/// * `Hash` - The combined hash.
 pub fn combine_hashes(hashes: &[Hash]) -> Hash {
     if hashes.is_empty() {
         return Hash(0);
@@ -134,6 +181,11 @@ pub fn combine_hashes(hashes: &[Hash]) -> Hash {
     Hash(combined)
 }
 
+/// Generates a random hash using RDRAND if available, otherwise uses the TSC.
+///
+/// # Returns
+///
+/// * `Hash` - The generated random hash.
 pub fn random_hash() -> Hash {
     let features = CPU_FEATURES.lock();
     if features.has_rdrand {
@@ -146,6 +198,11 @@ pub fn random_hash() -> Hash {
     Hash(tsc.wrapping_mul(0x9e3779b97f4a7c15))
 }
 
+/// Generates a random 64-bit value using the RDRAND instruction.
+///
+/// # Returns
+///
+/// * `Option<u64>` - The generated random value if RDRAND is supported, otherwise `None`.
 #[inline]
 unsafe fn _rdrand64_step() -> Option<u64> {
     let mut val: u64 = 0;

@@ -14,15 +14,15 @@
 * limitations under the License.
 */
 
+use crate::verification::FSOpType;
+use crate::verification::ProofData;
 use crate::{
     hash, tsc,
     verification::{Hash, OperationProof, Verifiable, VerificationError},
     vkfs::Superblock,
 };
-use x86_64::VirtAddr;
-use crate::verification::FSOpType;
-use crate::verification::ProofData;
 use alloc::vec::Vec;
+use x86_64::VirtAddr;
 
 #[derive(Debug, Clone)]
 pub struct BlockOperationProof {
@@ -176,33 +176,36 @@ fn verify_signature(proof: &OperationProof) -> bool {
             verification_data.extend_from_slice(&(mem_proof.address.as_u64().to_ne_bytes()));
             verification_data.extend_from_slice(&(mem_proof.size.to_ne_bytes()));
             verification_data.extend_from_slice(&(mem_proof.frame_hash.0.to_ne_bytes()));
-        },
+        }
         ProofData::Filesystem(fs_proof) => {
             verification_data.extend_from_slice(&[1]);
             verification_data.extend_from_slice(fs_proof.path.as_bytes());
             verification_data.extend_from_slice(&fs_proof.content_hash.0.to_ne_bytes());
-        },
+        }
         ProofData::Process(proc_proof) => {
             verification_data.extend_from_slice(&[2]);
             verification_data.extend_from_slice(&proc_proof.pid.to_ne_bytes());
             verification_data.extend_from_slice(&proc_proof.state_hash.0.to_ne_bytes());
-        },
+        }
         ProofData::Boot(boot_proof) => {
             verification_data.extend_from_slice(&[3]);
             verification_data.extend_from_slice(&boot_proof.stage_hash.0.to_ne_bytes());
-        },
+        }
         ProofData::Tile(tile_proof) => {
             verification_data.extend_from_slice(&[4]);
             verification_data.extend_from_slice(&tile_proof.tile_id.to_ne_bytes());
             verification_data.extend_from_slice(&(tile_proof.position.0.to_ne_bytes()));
             verification_data.extend_from_slice(&(tile_proof.position.1.to_ne_bytes()));
             verification_data.extend_from_slice(&tile_proof.tile_hash.0.to_ne_bytes());
-        },
-        ProofData::Generic { operation_type, data_hash } => {
+        }
+        ProofData::Generic {
+            operation_type,
+            data_hash,
+        } => {
             verification_data.extend_from_slice(&[5]);
             verification_data.extend_from_slice(operation_type.as_bytes());
             verification_data.extend_from_slice(&data_hash.0.to_ne_bytes());
-        },
+        }
     }
 
     let verifier = crate::crypto::CRYPTO_VERIFIER.lock();

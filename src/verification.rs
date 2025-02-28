@@ -14,21 +14,21 @@
 * limitations under the License.
 */
 
-use core::sync::atomic::{AtomicU64, Ordering};
-use x86_64::VirtAddr;
-use spin::Mutex;
-use crate::fs::FSOperation;
-use alloc::vec::Vec;
-use crate::BootStage;
-use crate::lazy_static;
 use crate::alloc::string::ToString;
-use crate::tsc;
 use crate::boot_verification::BootProof;
-use alloc::string::String;
-use core::sync::atomic::AtomicBool;
-use crate::key_store;
 use crate::crypto::CRYPTO_VERIFIER;
+use crate::fs::FSOperation;
+use crate::key_store;
+use crate::lazy_static;
 use crate::serial_println;
+use crate::tsc;
+use crate::BootStage;
+use alloc::string::String;
+use alloc::vec::Vec;
+use core::sync::atomic::AtomicBool;
+use core::sync::atomic::{AtomicU64, Ordering};
+use spin::Mutex;
+use x86_64::VirtAddr;
 
 #[derive(Debug)]
 pub enum VerificationError {
@@ -203,9 +203,9 @@ impl Clone for AtomicTransition {
 
 pub trait Verifiable {
     fn generate_proof(&self, operation: Operation) -> Result<OperationProof, VerificationError>;
-    
+
     fn verify_proof(&self, proof: &OperationProof) -> Result<bool, VerificationError>;
-    
+
     fn state_hash(&self) -> Hash;
 }
 
@@ -330,12 +330,15 @@ impl VerificationRegistry {
         match key_store.get_verification_key() {
             Ok(key) => {
                 let has_real_key = !key.iter().all(|&b| b == 0);
-                serial_println!("Key test: {}", if has_real_key { "PASSED" } else { "FAILED" });
+                serial_println!(
+                    "Key test: {}",
+                    if has_real_key { "PASSED" } else { "FAILED" }
+                );
                 if !has_real_key {
                     serial_println!("WARNING: All-zero verification key detected");
                     return Ok(false);
                 }
-            },
+            }
             Err(e) => {
                 serial_println!("Key test: FAILED - {}", e);
                 return Ok(false);
@@ -348,7 +351,7 @@ impl VerificationRegistry {
             op_id: tsc::read_tsc(),
             prev_state: Hash(0x12345678),
             new_state: Hash(0x87654321),
-            data: ProofData::Generic { 
+            data: ProofData::Generic {
                 operation_type: "test".to_string(),
                 data_hash: Hash(0xABCDEF12),
             },
@@ -361,8 +364,14 @@ impl VerificationRegistry {
         }
 
         let has_real_signature = !test_proof.signature.iter().all(|&b| b == 0);
-        serial_println!("Signature generation test: {}", 
-            if has_real_signature { "PASSED" } else { "FAILED" });
+        serial_println!(
+            "Signature generation test: {}",
+            if has_real_signature {
+                "PASSED"
+            } else {
+                "FAILED"
+            }
+        );
         if !has_real_signature {
             return Ok(false);
         }
@@ -370,9 +379,11 @@ impl VerificationRegistry {
         match self.verify_proof(&test_proof) {
             Ok(true) => serial_println!("Signature verification test: PASSED"),
             Ok(false) => {
-                serial_println!("Signature verification test: FAILED - Verification returned false");
+                serial_println!(
+                    "Signature verification test: FAILED - Verification returned false"
+                );
                 return Ok(false);
-            },
+            }
             Err(e) => {
                 serial_println!("Signature verification test: FAILED - {:?}", e);
                 return Ok(false);
@@ -424,19 +435,22 @@ impl VerificationRegistry {
                 verification_data.extend_from_slice(&(tile_proof.position.0.to_ne_bytes()));
                 verification_data.extend_from_slice(&(tile_proof.position.1.to_ne_bytes()));
                 verification_data.extend_from_slice(&tile_proof.tile_hash.0.to_ne_bytes());
-            },
-            ProofData::Generic { operation_type, data_hash } => {
+            }
+            ProofData::Generic {
+                operation_type,
+                data_hash,
+            } => {
                 verification_data.extend_from_slice(&[5]);
                 verification_data.extend_from_slice(operation_type.as_bytes());
                 verification_data.extend_from_slice(&data_hash.0.to_ne_bytes());
-            },
+            }
         }
 
         match key_store::KEY_STORE.lock().sign_data(&verification_data) {
             Ok(signature) => {
                 proof.signature = signature;
                 Ok(())
-            },
+            }
             Err(_) => Err(VerificationError::SignatureVerificationFailed),
         }
     }
@@ -479,23 +493,28 @@ impl VerificationRegistry {
                 verification_data.extend_from_slice(&(tile_proof.position.0.to_ne_bytes()));
                 verification_data.extend_from_slice(&(tile_proof.position.1.to_ne_bytes()));
                 verification_data.extend_from_slice(&tile_proof.tile_hash.0.to_ne_bytes());
-            },
-            ProofData::Generic { operation_type, data_hash } => {
+            }
+            ProofData::Generic {
+                operation_type,
+                data_hash,
+            } => {
                 verification_data.extend_from_slice(&[5]);
                 verification_data.extend_from_slice(operation_type.as_bytes());
                 verification_data.extend_from_slice(&data_hash.0.to_ne_bytes());
-            },
+            }
         }
 
         let verifier = CRYPTO_VERIFIER.lock();
         if !verifier.verify_signature(&verification_data, &proof.signature) {
             if is_early_boot {
-                serial_println!("Warning: Early boot signature verification failed, proceeding anyway");
+                serial_println!(
+                    "Warning: Early boot signature verification failed, proceeding anyway"
+                );
                 return Ok(true);
             }
             return Err(VerificationError::InvalidSignature);
         }
-        
+
         Ok(true)
     }
 
@@ -505,15 +524,16 @@ impl VerificationRegistry {
                 ProofData::Boot(_) => true,
                 _ => false,
             };
-            
+
             if is_early_boot {
                 serial_println!("Warning: Failed to sign proof during early boot: {:?}", e);
             } else {
                 serial_println!("Warning: Failed to sign proof: {:?}", e);
             }
         }
-        
-        self.current_state.store(proof.new_state.0, Ordering::SeqCst);
+
+        self.current_state
+            .store(proof.new_state.0, Ordering::SeqCst);
         self.proofs.push(proof);
     }
 

@@ -22,12 +22,14 @@ use crate::{
 use alloc::vec::Vec;
 use x86_64::VirtAddr;
 
+/// Represents a chain of hashes.
 #[derive(Debug)]
 pub struct HashChain {
     nodes: Vec<ChainNode>,
     current_hash: Hash,
 }
 
+/// Represents a node in the hash chain.
 #[derive(Debug, Clone)]
 struct ChainNode {
     hash: Hash,
@@ -35,6 +37,7 @@ struct ChainNode {
     node_type: NodeType,
 }
 
+/// Enum representing the type of node in the hash chain.
 #[derive(Debug, Clone)]
 enum NodeType {
     Directory(DirectoryNode),
@@ -42,18 +45,21 @@ enum NodeType {
     Entry(EntryNode),
 }
 
+/// Represents a directory node in the hash chain.
 #[derive(Debug, Clone)]
 struct DirectoryNode {
     inode: u32,
     entries: Vec<Hash>,
 }
 
+/// Represents a file node in the hash chain.
 #[derive(Debug, Clone)]
 struct FileNode {
     inode: u32,
     blocks: Vec<Hash>,
 }
 
+/// Represents an entry node in the hash chain.
 #[derive(Debug, Clone)]
 struct EntryNode {
     name: [u8; 255],
@@ -62,6 +68,11 @@ struct EntryNode {
 }
 
 impl HashChain {
+    /// Creates a new `HashChain` instance.
+    ///
+    /// # Returns
+    ///
+    /// * `HashChain` - A new instance of `HashChain`.
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),
@@ -69,6 +80,13 @@ impl HashChain {
         }
     }
 
+    /// Verifies the integrity of the hash chain.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` if the chain is valid.
+    /// * `Ok(false)` if the chain is invalid.
+    /// * `Err(VerificationError)` if an error occurred during verification.
     pub fn verify_chain(&self) -> Result<bool, VerificationError> {
         let mut current = Hash(0);
 
@@ -83,6 +101,16 @@ impl HashChain {
         Ok(current == self.current_hash)
     }
 
+    /// Adds a directory to the hash chain.
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - A reference to the `Directory` to add.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if the directory was added successfully.
+    /// * `Err(VerificationError)` if an error occurred during the operation.
     pub fn add_directory(&mut self, dir: &Directory) -> Result<(), VerificationError> {
         let mut entry_hashes = Vec::new();
 
@@ -106,6 +134,16 @@ impl HashChain {
         Ok(())
     }
 
+    /// Adds a file to the hash chain.
+    ///
+    /// # Arguments
+    ///
+    /// * `inode` - A reference to the `Inode` of the file to add.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` if the file was added successfully.
+    /// * `Err(VerificationError)` if an error occurred during the operation.
     pub fn add_file(&mut self, inode: &Inode) -> Result<(), VerificationError> {
         let mut block_hashes = Vec::new();
 
@@ -137,6 +175,15 @@ impl HashChain {
         Ok(())
     }
 
+    /// Computes the hash of a directory entry.
+    ///
+    /// # Arguments
+    ///
+    /// * `entry` - A reference to the `DirEntry` to hash.
+    ///
+    /// # Returns
+    ///
+    /// * `Hash` - The computed hash of the directory entry.
     fn hash_entry(entry: &DirEntry) -> Hash {
         let entry_data = unsafe {
             core::slice::from_raw_parts(
@@ -148,6 +195,17 @@ impl HashChain {
         hash::hash_memory(VirtAddr::new(entry_data.as_ptr() as u64), entry_data.len())
     }
 
+    /// Verifies the integrity of a directory in the hash chain.
+    ///
+    /// # Arguments
+    ///
+    /// * `dir` - A reference to the `Directory` to verify.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` if the directory is valid.
+    /// * `Ok(false)` if the directory is invalid.
+    /// * `Err(VerificationError)` if an error occurred during verification.
     pub fn verify_directory(&self, dir: &Directory) -> Result<bool, VerificationError> {
         let mut entry_hashes = Vec::new();
         for entry in dir.get_entries() {
@@ -164,6 +222,17 @@ impl HashChain {
         }))
     }
 
+    /// Verifies the integrity of a file in the hash chain.
+    ///
+    /// # Arguments
+    ///
+    /// * `inode` - A reference to the `Inode` of the file to verify.
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(true)` if the file is valid.
+    /// * `Ok(false)` if the file is invalid.
+    /// * `Err(VerificationError)` if an error occurred during verification.
     pub fn verify_file(&self, inode: &Inode) -> Result<bool, VerificationError> {
         let mut block_hashes = Vec::new();
         for &block in inode.get_direct_blocks() {

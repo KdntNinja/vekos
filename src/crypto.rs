@@ -14,20 +14,22 @@
 * limitations under the License.
 */
 
-use lazy_static::lazy_static;
-use crate::serial_println;
-use ed25519_compact::{Signature, PublicKey, Noise};
-use spin::Mutex;
 use crate::key_store;
+use crate::serial_println;
+use ed25519_compact::{Noise, PublicKey, Signature};
+use lazy_static::lazy_static;
+use spin::Mutex;
 
 const ED25519_PUBLIC_KEY_LENGTH: usize = 32;
 const VKFS_KEY_LENGTH: usize = 64;
 const ED25519_SIGNATURE_LENGTH: usize = 64;
 
+/// Struct representing a cryptographic verifier.
 pub struct CryptoVerifier {
     verification_key: [u8; VKFS_KEY_LENGTH],
 }
 
+/// Macro to create a reference to a subarray.
 macro_rules! array_ref {
     ($arr:expr, $offset:expr, $len:expr) => {{
         {
@@ -42,19 +44,45 @@ macro_rules! array_ref {
     }};
 }
 
-
 impl CryptoVerifier {
+    ///
+    /// # Arguments
+    ///
+    /// * `initial_key` - The initial verification key.
+    ///
+    /// # Returns
+    ///
+    /// A new `CryptoVerifier` instance.
     pub fn new(initial_key: [u8; VKFS_KEY_LENGTH]) -> Self {
         Self {
             verification_key: initial_key,
         }
     }
 
+    /// Sets the verification key.
+    ///
+    /// # Arguments
+    ///
+    /// * `key` - The new verification key.
     pub fn set_verification_key(&mut self, key: &[u8; VKFS_KEY_LENGTH]) {
         self.verification_key[..].copy_from_slice(key);
     }
 
-    pub fn verify_signature(&self, data: &[u8], signature: &[u8; ED25519_SIGNATURE_LENGTH]) -> bool {
+    /// Verifies a signature.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The data to verify.
+    /// * `signature` - The signature to verify.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the signature is valid, `false` otherwise.
+    pub fn verify_signature(
+        &self,
+        data: &[u8],
+        signature: &[u8; ED25519_SIGNATURE_LENGTH],
+    ) -> bool {
         serial_println!("Starting ED25519 signature verification");
         serial_println!("Data length: {} bytes", data.len());
         serial_println!("Signature: {:02x?}...", &signature[..4]);
@@ -73,7 +101,7 @@ impl CryptoVerifier {
                 return false;
             }
         };
-        
+
         let sig = match Signature::from_slice(signature) {
             Ok(s) => s,
             Err(e) => {
@@ -86,7 +114,7 @@ impl CryptoVerifier {
             Ok(_) => {
                 serial_println!("Signature verification successful");
                 true
-            },
+            }
             Err(e) => {
                 serial_println!("Signature verification failed: {:?}", e);
                 false
@@ -94,6 +122,11 @@ impl CryptoVerifier {
         }
     }
 
+    /// Generates a new key pair.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the private key or an error message.
     pub fn generate_new_keypair(&mut self) -> Result<[u8; ED25519_SIGNATURE_LENGTH], &'static str> {
         let mut seed_bytes = [0u8; 32];
         if let Some(random_value) = self.get_secure_random() {
@@ -101,10 +134,10 @@ impl CryptoVerifier {
 
             for i in 1..4 {
                 if let Some(r) = self.get_secure_random() {
-                    seed_bytes[i*8..(i+1)*8].copy_from_slice(&r.to_ne_bytes());
+                    seed_bytes[i * 8..(i + 1) * 8].copy_from_slice(&r.to_ne_bytes());
                 }
             }
-            
+
             let seed = ed25519_compact::Seed::new(seed_bytes);
             let key_pair = ed25519_compact::KeyPair::from_seed(seed);
 
@@ -116,10 +149,15 @@ impl CryptoVerifier {
             private_key.copy_from_slice(key_pair.sk.as_ref());
             return Ok(private_key);
         }
-        
+
         Err("Failed to generate secure random seed")
     }
 
+    /// Gets a secure random value.
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing the random value or `None` if generation failed.
     fn get_secure_random(&self) -> Option<u64> {
         if unsafe { core::arch::x86_64::__cpuid(1).ecx & (1 << 30) != 0 } {
             let mut val: u64 = 0;
@@ -132,9 +170,21 @@ impl CryptoVerifier {
         Some(tsc.wrapping_mul(0x9e3779b97f4a7c15).rotate_left(17))
     }
 
-    pub fn sign_data(&self, data: &[u8], signing_key: &[u8; ED25519_SIGNATURE_LENGTH]) 
-        -> Result<[u8; ED25519_SIGNATURE_LENGTH], &'static str> {
-
+    /// Signs data.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The data to sign.
+    /// * `signing_key` - The signing key.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the signature or an error message.
+    pub fn sign_data(
+        &self,
+        data: &[u8],
+        signing_key: &[u8; ED25519_SIGNATURE_LENGTH],
+    ) -> Result<[u8; ED25519_SIGNATURE_LENGTH], &'static str> {
         let private_key = match ed25519_compact::SecretKey::from_slice(signing_key) {
             Ok(key) => key,
             Err(_) => return Err("Invalid signing key"),
@@ -145,7 +195,7 @@ impl CryptoVerifier {
             if let Some(random) = self.get_secure_random() {
                 let bytes = random.to_ne_bytes();
                 let start = i * 8;
-                noise_bytes[start..start+8].copy_from_slice(&bytes);
+                noise_bytes[start..start + 8].copy_from_slice(&bytes);
             }
         }
 
@@ -156,22 +206,31 @@ impl CryptoVerifier {
         Ok(sig_bytes)
     }
 
+    /// Gets the verification key.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the verification key or an error message.
     pub fn get_verification_key(&self) -> Result<[u8; VKFS_KEY_LENGTH], &'static str> {
         let mut key_copy = [0u8; VKFS_KEY_LENGTH];
         key_copy.copy_from_slice(&self.verification_key);
         Ok(key_copy)
     }
 
+    /// Tests the verification process.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the test is successful, `false` otherwise.
     pub fn test_verification(&self) -> bool {
         serial_println!("Running ED25519 verification test with self-generated keypair");
 
         let seed = ed25519_compact::Seed::new([
-            0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60,
-            0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c, 0xc4,
-            0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19,
-            0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7f, 0x60
+            0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec,
+            0x2c, 0xc4, 0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03,
+            0x1c, 0xae, 0x7f, 0x60,
         ]);
-        
+
         let key_pair = ed25519_compact::KeyPair::from_seed(seed);
         let message = b"test message";
 
@@ -185,9 +244,9 @@ impl CryptoVerifier {
         let signature_bytes = signature.as_ref();
         let mut signature_array = [0u8; 64];
         signature_array.copy_from_slice(signature_bytes);
-        
+
         let result = test_verifier.verify_signature(message, &signature_array);
-        
+
         serial_println!("Test verification result: {}", result);
 
         let system_result = match key_store::KEY_STORE.lock().get_verification_key() {
@@ -205,53 +264,69 @@ impl CryptoVerifier {
                             let verify_result = system_test.verify_signature(message, &sig);
                             serial_println!("System key verification test: {}", verify_result);
                             verify_result
-                        },
+                        }
                         Err(e) => {
                             serial_println!("System key signing test failed: {}", e);
                             false
                         }
                     };
-                    
+
                     sign_result
                 }
-            },
+            }
             Err(e) => {
                 serial_println!("Failed to get system verification key: {}", e);
                 false
             }
         };
-        
+
         serial_println!("System verification test: {}", system_result);
-        
+
         result && system_result
     }
 }
 
+/// Compares two arrays in constant time.
+///
+/// # Arguments
+///
+/// * `a` - The first array.
+/// * `b` - The second array.
+///
+/// # Returns
+///
+/// `true` if the arrays are equal, `false` otherwise.
 fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
     let mut result: u8 = 0;
-    
+
     for i in 0..32 {
         result |= a[i] ^ b[i];
     }
-    
+
     result == 0
 }
 
+/// Initializes the cryptographic subsystem.
+///
+/// # Returns
+///
+/// `true` if initialization is successful, `false` otherwise.
 pub fn init() -> bool {
     serial_println!("Initializing cryptographic subsystem");
 
     let verifier = CRYPTO_VERIFIER.lock();
     let test_result = verifier.test_verification();
-    
+
     if test_result {
         serial_println!("Cryptographic subsystem initialization successful");
     } else {
         serial_println!("WARNING: Cryptographic subsystem initialization failed!");
     }
-    
+
     test_result
 }
 
+/// Global instance of `CryptoVerifier`.
 lazy_static! {
     pub static ref CRYPTO_VERIFIER: Mutex<CryptoVerifier> =
         Mutex::new(CryptoVerifier::new([0; VKFS_KEY_LENGTH]));

@@ -187,7 +187,7 @@ fn sys_read(fd: u64, buf: u64, count: u64, _: u64, _: u64, _: u64) -> u64 {
             serial_println!("ERROR: Null buffer pointer");
             return u64::MAX;
         }
-        core::slice::from_raw_parts_mut(buffer_ptr, count as usize)
+        slice::from_raw_parts_mut(buffer_ptr, count as usize)
     };
 
     loop {
@@ -196,9 +196,9 @@ fn sys_read(fd: u64, buf: u64, count: u64, _: u64, _: u64, _: u64) -> u64 {
             return bytes_read as u64;
         }
 
-        x86_64::instructions::interrupts::enable();
+        interrupts::enable();
         core::hint::spin_loop();
-        x86_64::instructions::interrupts::disable();
+        interrupts::disable();
     }
 }
 
@@ -221,7 +221,7 @@ fn sys_write(fd: u64, buf: u64, count: u64, _: u64, _: u64, _: u64) -> u64 {
             return u64::MAX;
         }
         serial_println!("Buffer at {:#x}", buf);
-        core::slice::from_raw_parts(buffer_ptr, count as usize)
+        slice::from_raw_parts(buffer_ptr, count as usize)
     };
     serial_println!("Buffer contents: {:?}", slice);
 
@@ -293,7 +293,7 @@ fn sys_chdir(path: u64, _: u64, _: u64, _: u64, _: u64, _: u64) -> u64 {
             serial_println!("Path too long");
             return u64::MAX;
         }
-        let slice = core::slice::from_raw_parts(path as *const u8, len);
+        let slice = slice::from_raw_parts(path as *const u8, len);
         serial_println!("Path content: {:?}", slice);
         core::str::from_utf8_unchecked(slice)
     };
@@ -484,20 +484,18 @@ pub fn init() {
 
         lazy_static::initialize(&SYSCALL_TABLE);
 
-        x86_64::registers::model_specific::Efer::update(|efer| {
+        Efer::update(|efer| {
             *efer |= x86_64::registers::model_specific::EferFlags::SYSTEM_CALL_EXTENSIONS;
         });
 
-        x86_64::registers::model_specific::SFMask::write(
-            x86_64::registers::rflags::RFlags::INTERRUPT_FLAG,
-        );
+        SFMask::write(RFlags::INTERRUPT_FLAG);
         serial_println!(
             "Handler region for syscalls: {:#x}",
             handler_region.as_u64()
         );
-        x86_64::registers::model_specific::LStar::write(handler_region);
+        LStar::write(handler_region);
 
-        x86_64::registers::model_specific::Star::write(
+        Star::write(
             SegmentSelector::new(2, x86_64::PrivilegeLevel::Ring3),
             SegmentSelector::new(1, x86_64::PrivilegeLevel::Ring3),
             SegmentSelector::new(1, x86_64::PrivilegeLevel::Ring0),

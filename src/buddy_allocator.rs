@@ -28,6 +28,7 @@ const MAX_ORDER: usize = 11;
 const MAX_ALLOCATION_SIZE: usize = 1024 * 1024 * 1024;
 const MAX_BLOCK_SIZE: usize = 8 * 1024 * 1024;
 
+/// A buddy allocator for managing memory allocation.
 pub struct BuddyAllocator {
     free_lists: [Option<NonNull<FreeBlock>>; MAX_ORDER + 1],
     start_addr: VirtAddr,
@@ -36,6 +37,7 @@ pub struct BuddyAllocator {
     free_pages: usize,
 }
 
+/// A free block in the buddy allocator.
 struct FreeBlock {
     next: Option<NonNull<FreeBlock>>,
     order: usize,
@@ -46,6 +48,11 @@ unsafe impl Send for BuddyAllocator {}
 unsafe impl Sync for BuddyAllocator {}
 
 impl BuddyAllocator {
+    /// Creates a new buddy allocator.
+    ///
+    /// # Returns
+    ///
+    /// A new `BuddyAllocator` instance.
     pub const fn new() -> Self {
         Self {
             free_lists: [None; MAX_ORDER + 1],
@@ -56,6 +63,16 @@ impl BuddyAllocator {
         }
     }
 
+    /// Initializes the buddy allocator.
+    ///
+    /// # Arguments
+    ///
+    /// * `start` - The starting address of the memory region.
+    /// * `size` - The size of the memory region.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure.
     pub unsafe fn init(&mut self, start: VirtAddr, size: usize) -> Result<(), &'static str> {
         if !self.initialized {
             if size < MIN_BLOCK_SIZE || size & (MIN_BLOCK_SIZE - 1) != 0 {
@@ -81,6 +98,15 @@ impl BuddyAllocator {
         }
     }
 
+    /// Calculates the order for a given size.
+    ///
+    /// # Arguments
+    ///
+    /// * `size` - The size to calculate the order for.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the order or an error message.
     fn calculate_order(&self, size: usize) -> Result<usize, &'static str> {
         if size > MAX_ALLOCATION_SIZE {
             return Err("Allocation size exceeds maximum allowed");
@@ -103,12 +129,21 @@ impl BuddyAllocator {
         Ok(order)
     }
 
+    /// Allocates memory with a specific layout.
+    ///
+    /// # Arguments
+    ///
+    /// * `layout` - The layout of the memory to allocate.
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing the allocated memory or `None` if allocation failed.
     pub unsafe fn allocate_with_zone(&mut self, layout: Layout) -> Option<NonNull<u8>> {
         if self.size == 0 {
             return None;
         }
 
-        let size = layout.size().max(layout.align()).max(MIN_BLOCK_SIZE);
+        let _size = layout.size().max(layout.align()).max(MIN_BLOCK_SIZE);
 
         if self.check_memory_pressure() {
             if !self.try_reclaim_memory() {
@@ -120,11 +155,16 @@ impl BuddyAllocator {
             return None;
         }
 
-        let size = layout.size().max(layout.align()).max(MIN_BLOCK_SIZE);
+        let _size = layout.size().max(layout.align()).max(MIN_BLOCK_SIZE);
 
         self.allocate(layout)
     }
 
+    /// Checks if the memory pressure is high.
+    ///
+    /// # Returns
+    ///
+    /// `true` if memory pressure is high, `false` otherwise.
     fn check_memory_pressure(&self) -> bool {
         let total_pages = self.size / 4096;
         let used_pages = total_pages - self.free_pages;
@@ -133,6 +173,11 @@ impl BuddyAllocator {
         usage_percent > 95
     }
 
+    /// Attempts to reclaim memory.
+    ///
+    /// # Returns
+    ///
+    /// `true` if memory was reclaimed, `false` otherwise.
     fn try_reclaim_memory(&mut self) -> bool {
         if !self.check_memory_pressure() {
             return true;
@@ -152,6 +197,16 @@ impl BuddyAllocator {
         reclaimed
     }
 
+    /// Splits a block into smaller blocks.
+    ///
+    /// # Arguments
+    ///
+    /// * `block` - The block to split.
+    /// * `target_order` - The target order to split to.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the split block or an error message.
     unsafe fn split_block(
         &mut self,
         block: NonNull<FreeBlock>,
@@ -199,6 +254,15 @@ impl BuddyAllocator {
         Ok(current_block)
     }
 
+    /// Allocates memory with a specific layout.
+    ///
+    /// # Arguments
+    ///
+    /// * `layout` - The layout of the memory to allocate.
+    ///
+    /// # Returns
+    ///
+    /// An `Option` containing the allocated memory or `None` if allocation failed.
     unsafe fn allocate(&mut self, layout: Layout) -> Option<NonNull<u8>> {
         if self.size == 0 {
             serial_println!("BuddyAllocator: Not initialized");
@@ -254,6 +318,12 @@ impl BuddyAllocator {
         None
     }
 
+    /// Deallocates memory.
+    ///
+    /// # Arguments
+    ///
+    /// * `ptr` - The pointer to the memory to deallocate.
+    /// * `layout` - The layout of the memory to deallocate.
     pub unsafe fn deallocate(&mut self, ptr: NonNull<u8>, layout: Layout) {
         let size = layout.size().max(layout.align()).max(MIN_BLOCK_SIZE);
 
@@ -270,6 +340,12 @@ impl BuddyAllocator {
         self.coalesce(NonNull::new_unchecked(block_ptr), order);
     }
 
+    /// Coalesces adjacent free blocks.
+    ///
+    /// # Arguments
+    ///
+    /// * `block` - The block to coalesce.
+    /// * `order` - The order of the block.
     unsafe fn coalesce(&mut self, mut block: NonNull<FreeBlock>, mut order: usize) {
         while order < MAX_ORDER {
             let block_addr = block.as_ptr() as usize;
@@ -309,13 +385,24 @@ impl BuddyAllocator {
     }
 }
 
+/// A locked buddy allocator for thread-safe memory allocation.
 pub struct LockedBuddyAllocator(pub(crate) Mutex<BuddyAllocator>);
 
 impl LockedBuddyAllocator {
+    /// Creates a new locked buddy allocator.
+    ///
+    /// # Returns
+    ///
+    /// A new `LockedBuddyAllocator` instance.
     pub const fn new() -> Self {
         LockedBuddyAllocator(Mutex::new(BuddyAllocator::new()))
     }
 
+    /// Locks the buddy allocator and returns a guard.
+    ///
+    /// # Returns
+    ///
+    /// A `MutexGuard` for the buddy allocator.
     pub fn lock(&self) -> spin::MutexGuard<BuddyAllocator> {
         self.0.lock()
     }

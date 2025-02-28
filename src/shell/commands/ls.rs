@@ -22,6 +22,7 @@ use crate::shell::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+/// Struct representing the flags for the `ls` command.
 #[derive(Debug, Clone, Copy)]
 pub struct LsFlags {
     long_format: bool,
@@ -32,6 +33,7 @@ pub struct LsFlags {
 }
 
 impl Default for LsFlags {
+    /// Provides default values for `LsFlags`.
     fn default() -> Self {
         Self {
             long_format: false,
@@ -43,6 +45,15 @@ impl Default for LsFlags {
     }
 }
 
+/// Parses the command-line arguments for the `ls` command.
+///
+/// # Arguments
+///
+/// * `args` - A slice of `String` containing the command-line arguments.
+///
+/// # Returns
+///
+/// A tuple containing the parsed `LsFlags` and a vector of paths.
 pub fn parse_ls_flags(args: &[String]) -> (LsFlags, Vec<String>) {
     let mut flags = LsFlags::default();
     let mut paths = Vec::new();
@@ -71,6 +82,15 @@ pub fn parse_ls_flags(args: &[String]) -> (LsFlags, Vec<String>) {
     (flags, paths)
 }
 
+/// Formats the file permissions for display.
+///
+/// # Arguments
+///
+/// * `stats` - A reference to `FileStats` containing the file's metadata.
+///
+/// # Returns
+///
+/// A `String` representing the formatted permissions.
 fn format_permissions(stats: &FileStats) -> String {
     let mut perms = String::with_capacity(10);
     perms.push(if stats.is_directory { 'd' } else { '-' });
@@ -81,6 +101,16 @@ fn format_permissions(stats: &FileStats) -> String {
     perms
 }
 
+/// Formats the file size for display.
+///
+/// # Arguments
+///
+/// * `size` - The size of the file in bytes.
+/// * `human_readable` - A boolean indicating whether to format the size in a human-readable format.
+///
+/// # Returns
+///
+/// A `String` representing the formatted size.
 fn format_size(size: usize, human_readable: bool) -> String {
     if !human_readable {
         return format!("{:>8}", size);
@@ -102,6 +132,15 @@ fn format_size(size: usize, human_readable: bool) -> String {
     }
 }
 
+/// Formats the timestamp for display.
+///
+/// # Arguments
+///
+/// * `timestamp` - The timestamp in seconds since the epoch.
+///
+/// # Returns
+///
+/// A `String` representing the formatted time.
 fn format_time(timestamp: u64) -> String {
     let secs = timestamp % 60;
     let mins = (timestamp / 60) % 60;
@@ -109,6 +148,16 @@ fn format_time(timestamp: u64) -> String {
     format!("{:02}:{:02}:{:02}", hours, mins, secs)
 }
 
+/// Lists the contents of a directory.
+///
+/// # Arguments
+///
+/// * `path` - The path of the directory to list.
+/// * `flags` - The `LsFlags` specifying the display options.
+///
+/// # Returns
+///
+/// A `Result` indicating success or failure.
 pub fn list_directory(path: &str, flags: LsFlags) -> Result<(), &'static str> {
     serial_println!("Listing directory: {}", path);
     let normalized_path = crate::fs::normalize_path(path);

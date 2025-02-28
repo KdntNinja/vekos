@@ -24,6 +24,11 @@ use x86_64::structures::paging::Size4KiB;
 use x86_64::structures::paging::{Page, PageTableFlags};
 use x86_64::VirtAddr;
 
+/// Represents the ELF file header structure.
+///
+/// The ELF header contains information about the ELF file, such as the type,
+/// machine, version, entry point, program header offset, section header offset,
+/// flags, and sizes of various structures.
 #[repr(C)]
 pub struct ElfHeader {
     e_ident: [u8; 16],
@@ -42,6 +47,11 @@ pub struct ElfHeader {
     e_shstrndx: u16,
 }
 
+/// Represents the program header structure.
+///
+/// The program header contains information about a segment in the ELF file,
+/// such as the type, flags, offset in the file, virtual address, physical address,
+/// file size, memory size, and alignment.
 #[repr(C)]
 pub struct ProgramHeader {
     p_type: u32,
@@ -59,6 +69,16 @@ const PF_X: u32 = 0x1;
 const PF_W: u32 = 0x2;
 const PF_R: u32 = 0x4;
 
+/// Loads an ELF executable into memory.
+///
+/// # Arguments
+///
+/// * `data` - A byte slice containing the ELF file data.
+/// * `memory_manager` - A mutable reference to the memory manager.
+///
+/// # Returns
+///
+/// A `Result` containing the entry point address of the loaded ELF executable or a `MemoryError`.
 pub fn load_elf(data: &[u8], memory_manager: &mut MemoryManager) -> Result<VirtAddr, MemoryError> {
     serial_println!("Starting ELF loading");
     serial_println!("File size: {} bytes", data.len());

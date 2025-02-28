@@ -26,8 +26,7 @@ use core::fmt::Write;
 mod commands;
 use crate::alloc::string::ToString;
 use crate::fs::normalize_path;
-use crate::vga_buffer::BUFFER_HEIGHT;
-use crate::vga_buffer::BUFFER_WIDTH;
+use crate::vga_buffer::{BUFFER_HEIGHT, BUFFER_WIDTH};
 use crate::MEMORY_MANAGER;
 
 mod display;
@@ -37,6 +36,7 @@ mod parser;
 use executor::CommandExecutor;
 use parser::{Parser, TokenType};
 
+/// Enum representing possible errors in the shell.
 #[derive(Debug)]
 pub enum ShellError {
     CommandNotFound,
@@ -55,11 +55,21 @@ pub enum ShellError {
 }
 
 impl From<&str> for ShellError {
+    /// Converts a string slice to a `ShellError`.
+    ///
+    /// # Arguments
+    ///
+    /// * `_` - A string slice representing the error message.
+    ///
+    /// # Returns
+    ///
+    /// A `ShellError` variant.
     fn from(_: &str) -> Self {
         ShellError::ExecutionFailed
     }
 }
 
+/// Enum representing possible exit codes for shell commands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExitCode {
     Success = 0,
@@ -69,6 +79,15 @@ pub enum ExitCode {
 }
 
 impl ExitCode {
+    /// Converts an `i32` to an `ExitCode`.
+    ///
+    /// # Arguments
+    ///
+    /// * `code` - An integer representing the exit code.
+    ///
+    /// # Returns
+    ///
+    /// An `ExitCode` variant.
     pub fn from_i32(code: i32) -> Self {
         match code {
             0 => ExitCode::Success,
@@ -80,8 +99,10 @@ impl ExitCode {
     }
 }
 
+/// Type alias for shell result.
 pub type ShellResult = Result<ExitCode, ShellError>;
 
+/// Struct representing the shell.
 pub struct Shell {
     input_buffer: InputBuffer,
     display: ShellDisplay,
@@ -94,6 +115,7 @@ pub struct Shell {
     executor: CommandExecutor,
 }
 
+/// Struct representing the input buffer.
 #[derive(Debug)]
 struct InputBuffer {
     buffer: Vec<u8>,
@@ -102,6 +124,11 @@ struct InputBuffer {
 }
 
 impl InputBuffer {
+    /// Creates a new `InputBuffer`.
+    ///
+    /// # Returns
+    ///
+    /// A new `InputBuffer` instance.
     fn new() -> Self {
         Self {
             buffer: Vec::with_capacity(1024),
@@ -110,6 +137,15 @@ impl InputBuffer {
         }
     }
 
+    /// Inserts a byte into the input buffer.
+    ///
+    /// # Arguments
+    ///
+    /// * `byte` - The byte to insert.
+    ///
+    /// # Returns
+    ///
+    /// A boolean indicating success or failure.
     fn insert(&mut self, byte: u8) -> bool {
         if self.buffer.len() >= 1024 {
             return false;
@@ -124,6 +160,11 @@ impl InputBuffer {
         true
     }
 
+    /// Removes the last byte from the input buffer.
+    ///
+    /// # Returns
+    ///
+    /// A boolean indicating success or failure.
     fn backspace(&mut self) -> bool {
         if self.cursor_position > 0 {
             self.cursor_position -= 1;
@@ -134,6 +175,11 @@ impl InputBuffer {
         }
     }
 
+    /// Moves the cursor to the left.
+    ///
+    /// # Returns
+    ///
+    /// A boolean indicating success or failure.
     fn move_cursor_left(&mut self) -> bool {
         if self.cursor_position > 0 {
             self.cursor_position -= 1;
@@ -143,6 +189,11 @@ impl InputBuffer {
         }
     }
 
+    /// Moves the cursor to the right.
+    ///
+    /// # Returns
+    ///
+    /// A boolean indicating success or failure.
     fn move_cursor_right(&mut self) -> bool {
         if self.cursor_position < self.buffer.len() {
             self.cursor_position += 1;
@@ -152,6 +203,7 @@ impl InputBuffer {
         }
     }
 
+    /// Clears the input buffer.
     fn clear(&mut self) {
         self.buffer.clear();
         self.cursor_position = 0;
@@ -160,6 +212,11 @@ impl InputBuffer {
 }
 
 impl Shell {
+    /// Creates a new `Shell`.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the new `Shell` instance or a `ShellError`.
     pub fn new() -> Result<Self, ShellError> {
         Ok(Self {
             input_buffer: InputBuffer::new(),
@@ -174,6 +231,11 @@ impl Shell {
         })
     }
 
+    /// Initializes the shell.
+    ///
+    /// # Returns
+    ///
+    /// A `ShellResult` indicating success or failure.
     pub fn init(&mut self) -> ShellResult {
         {
             let mut writer = WRITER.lock();
@@ -194,8 +256,9 @@ impl Shell {
             if let Some(mm) = memory_manager.as_mut() {
                 match Process::new(mm) {
                     Ok(mut init_process) => {
-                         init_process.current_dir = "/".to_string();
-                        process_list.add(init_process)
+                        init_process.current_dir = "/".to_string();
+                        process_list
+                            .add(init_process)
                             .map_err(|_| ShellError::InternalError)?;
                     }
                     Err(_) => return Err(ShellError::InternalError),
@@ -212,12 +275,26 @@ impl Shell {
         Ok(ExitCode::Success)
     }
 
+    /// Updates the current directory of the shell.
+    ///
+    /// # Arguments
+    ///
+    /// * `new_path` - A string representing the new path.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or failure.
     pub fn general_update_current_dir(&mut self, new_path: String) -> Result<(), ShellError> {
         let normalized = normalize_path(&new_path);
         self.current_dir = normalized;
         Ok(())
     }
 
+    /// Runs the shell.
+    ///
+    /// # Returns
+    ///
+    /// A `ShellResult` indicating success or failure.
     pub fn run(&mut self) -> ShellResult {
         while self.is_running {
             self.display_prompt()?;
@@ -231,6 +308,11 @@ impl Shell {
         Ok(ExitCode::Success)
     }
 
+    /// Displays the shell prompt.
+    ///
+    /// # Returns
+    ///
+    /// A `ShellResult` indicating success or failure.
     fn display_prompt(&mut self) -> ShellResult {
         self.display.set_prompt(format!("{}> ", self.current_dir));
         let prompt_pos = self.display.render_prompt();
@@ -241,6 +323,11 @@ impl Shell {
         Ok(ExitCode::Success)
     }
 
+    /// Reads a command from the input buffer.
+    ///
+    /// # Returns
+    ///
+    /// A `ShellResult` indicating success or failure.
     fn read_command(&mut self) -> ShellResult {
         let mut command_complete = false;
         let initial_column = self.display.get_cursor_position();
@@ -423,11 +510,26 @@ impl Shell {
         Ok(ExitCode::Success)
     }
 
+    /// Executes a command in the shell.
+    ///
+    /// # Arguments
+    ///
+    /// * `command` - A string slice representing the command.
+    /// * `args` - A slice of strings representing the arguments.
+    ///
+    /// # Returns
+    ///
+    /// A `ShellResult` indicating success or failure.
     fn execute_command(&mut self, command: &str, args: &[String]) -> ShellResult {
         serial_println!("Shell: Starting command execution for '{}'", command);
         self.executor.execute(command, args)
     }
 
+    /// Shuts down the shell.
+    ///
+    /// # Returns
+    ///
+    /// A `ShellResult` indicating success or failure.
     pub fn shutdown(&mut self) -> ShellResult {
         self.is_running = false;
         Ok(ExitCode::Success)

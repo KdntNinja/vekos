@@ -15,24 +15,19 @@
 */
 
 use crate::println;
-use crate::{
-    process::{Process, ProcessId, ProcessState, PROCESS_LIST}
-};
-use x86_64::{
-    VirtAddr,
-    registers::control::Cr3,
-};
+use crate::process::{Process, ProcessId, ProcessState, PROCESS_LIST};
+use x86_64::{registers::control::Cr3, VirtAddr};
 
-use crate::serial_println;
-use crate::SYSTEM_TIME;
 use crate::priority::PriorityScheduler;
+use crate::scheduler_ml::{Action, SchedulerModel};
+use crate::serial_println;
 use crate::signals::Signal;
+use crate::MEMORY_MANAGER;
+use crate::SYSTEM_TIME;
+use alloc::vec::Vec;
+use core::arch::asm;
 use lazy_static::lazy_static;
 use spin::Mutex;
-use core::arch::asm;
-use alloc::vec::Vec;
-use crate::MEMORY_MANAGER;
-use crate::scheduler_ml::{SchedulerModel, Action, ProcessType};
 
 pub struct Scheduler {
     current_process: Option<ProcessId>,
@@ -47,7 +42,7 @@ pub struct Scheduler {
 impl Scheduler {
     pub fn new() -> Self {
         serial_println!("Initializing scheduler with ML capabilities");
-        
+
         let scheduler = Self {
             current_process: None,
             priority_scheduler: PriorityScheduler::new(),
@@ -57,22 +52,24 @@ impl Scheduler {
             last_reward: 0,
             ml_enabled: true,
         };
-        
+
         serial_println!("Scheduler initialization complete");
         scheduler
     }
 
     fn calculate_reward(&self, process: &Process) -> i32 {
-        serial_println!("Scheduler ML: Calculating reward for process {}", process.id().0);
-        
+        serial_println!(
+            "Scheduler ML: Calculating reward for process {}",
+            process.id().0
+        );
+
         let mut reward = 0;
 
         if process.remaining_time_slice > 0 {
             let time_slice = self.priority_scheduler.get_time_slice(process.id());
 
             if time_slice > 0 {
-                let efficiency = (process.remaining_time_slice.saturating_mul(1000)) / 
-                                 time_slice;
+                let efficiency = (process.remaining_time_slice.saturating_mul(1000)) / time_slice;
                 reward += efficiency as i32;
                 serial_println!("Scheduler ML: Efficiency reward: {}", efficiency as i32);
             }
@@ -80,71 +77,80 @@ impl Scheduler {
 
         reward = reward.saturating_sub((process.context_switches % 100) as i32 * 5);
         serial_println!("Scheduler ML: After context switch penalty: {}", reward);
-    
+
         if process.priority < 5 {
             reward = reward.saturating_add((5 - process.priority as i32) * 50);
             serial_println!("Scheduler ML: After priority bonus: {}", reward);
         }
-    
+
         reward = reward.saturating_add(process.io_operations as i32 / 10);
         serial_println!("Scheduler ML: After I/O bonus: {}", reward);
 
         let clamped_reward = reward.clamp(-1000, 1000);
         serial_println!("Scheduler ML: Final clamped reward: {}", clamped_reward);
-        
+
         clamped_reward
     }
 
     fn apply_ml_action(&mut self, process: &mut Process, action: Action) -> bool {
         let mut changed = false;
-        
+
         match action {
             Action::IncreasePriority => {
                 if process.priority > 1 {
                     process.priority -= 1;
                     changed = true;
-                    serial_println!("ML: Increased priority for process {} to {}", 
-                                  process.id().0, process.priority);
+                    serial_println!(
+                        "ML: Increased priority for process {} to {}",
+                        process.id().0,
+                        process.priority
+                    );
                 }
-            },
+            }
             Action::DecreasePriority => {
                 if process.priority < 10 {
                     process.priority += 1;
                     changed = true;
-                    serial_println!("ML: Decreased priority for process {} to {}", 
-                                  process.id().0, process.priority);
+                    serial_println!(
+                        "ML: Decreased priority for process {} to {}",
+                        process.id().0,
+                        process.priority
+                    );
                 }
-            },
+            }
             Action::IncreaseTimeSlice => {
                 let original = process.remaining_time_slice;
-                process.remaining_time_slice = 
-                    (process.remaining_time_slice * 12 / 10).min(500);
+                process.remaining_time_slice = (process.remaining_time_slice * 12 / 10).min(500);
                 changed = process.remaining_time_slice != original;
                 if changed {
-                    serial_println!("ML: Increased time slice for process {} to {}", 
-                                  process.id().0, process.remaining_time_slice);
+                    serial_println!(
+                        "ML: Increased time slice for process {} to {}",
+                        process.id().0,
+                        process.remaining_time_slice
+                    );
                 }
-            },
+            }
             Action::DecreaseTimeSlice => {
                 let original = process.remaining_time_slice;
-                process.remaining_time_slice = 
-                    (process.remaining_time_slice * 8 / 10).max(20);
+                process.remaining_time_slice = (process.remaining_time_slice * 8 / 10).max(20);
                 changed = process.remaining_time_slice != original;
                 if changed {
-                    serial_println!("ML: Decreased time slice for process {} to {}", 
-                                  process.id().0, process.remaining_time_slice);
+                    serial_println!(
+                        "ML: Decreased time slice for process {} to {}",
+                        process.id().0,
+                        process.remaining_time_slice
+                    );
                 }
-            },
-            Action::NoAction => {
-            },
+            }
+            Action::NoAction => {}
         }
-        
+
         changed
     }
 
     fn record_decision(&mut self, process: &mut Process, action: Action) {
         for i in 0..15 {
-            process.scheduler_decisions[i] = process.scheduler_decisions[i+1];
+            process.scheduler_decisions[i] = process.scheduler_decisions[i + 1];
         }
 
         process.scheduler_decisions[15] = match action {
@@ -157,17 +163,20 @@ impl Scheduler {
     }
 
     fn update_process_metrics(&mut self, process: &mut Process) {
-        serial_println!("Scheduler ML: Updating process metrics for process {}", process.id().0);
+        serial_println!(
+            "Scheduler ML: Updating process metrics for process {}",
+            process.id().0
+        );
 
         if process.cpu_usage_history.len() < 8 {
             serial_println!("Scheduler ML: Error - CPU usage history array is too small");
             return;
         }
-    
+
         for i in 0..7 {
-            process.cpu_usage_history[i] = process.cpu_usage_history[i+1];
+            process.cpu_usage_history[i] = process.cpu_usage_history[i + 1];
         }
-    
+
         let time_slice = self.priority_scheduler.get_time_slice(process.id());
         let used = time_slice.saturating_sub(process.remaining_time_slice);
         let usage_percent = if time_slice > 0 {
@@ -175,33 +184,43 @@ impl Scheduler {
         } else {
             0
         };
-        
+
         process.cpu_usage_history[7] = usage_percent;
 
         process.context_switches = process.context_switches.saturating_add(1);
 
-        process.memory_access_rate = (process.memory_access_rate.saturating_mul(3) + usage_percent) / 4;
+        process.memory_access_rate =
+            (process.memory_access_rate.saturating_mul(3) + usage_percent) / 4;
 
         if process.ml_reward_history.len() < 4 {
             serial_println!("Scheduler ML: Error - Reward history array is too small");
             return;
         }
-        
+
         for i in 0..3 {
-            process.ml_reward_history[i] = process.ml_reward_history[i+1];
+            process.ml_reward_history[i] = process.ml_reward_history[i + 1];
         }
         process.ml_reward_history[3] = self.last_reward;
-        
-        serial_println!("Scheduler ML: Successfully updated metrics for process {}", process.id().0);
+
+        serial_println!(
+            "Scheduler ML: Successfully updated metrics for process {}",
+            process.id().0
+        );
     }
 
     pub fn toggle_ml(&mut self) -> bool {
         self.ml_enabled = !self.ml_enabled;
-        serial_println!("ML scheduling is now {}", 
-                      if self.ml_enabled { "enabled" } else { "disabled" });
+        serial_println!(
+            "ML scheduling is now {}",
+            if self.ml_enabled {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
         self.ml_enabled
     }
-    
+
     pub fn get_ml_stats(&self) -> alloc::collections::BTreeMap<alloc::string::String, f32> {
         self.ml_model.get_statistics()
     }
@@ -278,13 +297,19 @@ impl Scheduler {
 
         let current_system_ticks = SYSTEM_TIME.ticks();
         self.ticks = current_system_ticks;
-        
-        serial_println!("Scheduler ML: Starting scheduling decision cycle (ticks={}, enabled={})", 
-                      self.ticks, self.ml_enabled);
 
-        serial_println!("Scheduler ML: Tick modulo check: {} % 5 = {}", 
-                      self.ticks, self.ticks % 5);
-        
+        serial_println!(
+            "Scheduler ML: Starting scheduling decision cycle (ticks={}, enabled={})",
+            self.ticks,
+            self.ml_enabled
+        );
+
+        serial_println!(
+            "Scheduler ML: Tick modulo check: {} % 5 = {}",
+            self.ticks,
+            self.ticks % 5
+        );
+
         if self.ml_enabled {
             serial_println!("Scheduler ML: ML is enabled");
             if self.ticks % 5 == 0 {
@@ -295,7 +320,7 @@ impl Scheduler {
         } else {
             serial_println!("Scheduler ML: ML is disabled");
         }
-        
+
         let mut processes = PROCESS_LIST.lock();
 
         if self.ml_enabled && self.ticks % 5 == 0 {
@@ -304,56 +329,82 @@ impl Scheduler {
             if self.current_process.is_none() {
                 if let Some(current) = processes.current() {
                     self.current_process = Some(current.id());
-                    serial_println!("Scheduler ML: Updated current_process to {}", current.id().0);
+                    serial_println!(
+                        "Scheduler ML: Updated current_process to {}",
+                        current.id().0
+                    );
                 }
             }
-            
+
             serial_println!("Scheduler ML: current_process = {:?}", self.current_process);
-            
+
             if let Some(current_pid) = self.current_process {
                 serial_println!("Scheduler ML: Found current process ID {}", current_pid.0);
                 if let Some(current) = processes.get_mut_by_id(current_pid) {
-                    if current.state() == ProcessState::Running || current.state() == ProcessState::Ready {
-                        serial_println!("Scheduler ML: Process {} is in {:?} state, applying ML",
-                                      current_pid.0, current.state());
+                    if current.state() == ProcessState::Running
+                        || current.state() == ProcessState::Ready
+                    {
+                        serial_println!(
+                            "Scheduler ML: Process {} is in {:?} state, applying ML",
+                            current_pid.0,
+                            current.state()
+                        );
 
                         let reward = self.calculate_reward(current);
-                        serial_println!("Scheduler ML: Calculated reward {} for process {}", 
-                                       reward, current.id().0);
+                        serial_println!(
+                            "Scheduler ML: Calculated reward {} for process {}",
+                            reward,
+                            current.id().0
+                        );
 
                         self.update_process_metrics(current);
 
                         if let Some(last_action) = self.last_action {
-                            serial_println!("Scheduler ML: Updating model for last action {:?} with reward {}",
-                                          last_action, reward);
-                                          
+                            serial_println!(
+                                "Scheduler ML: Updating model for last action {:?} with reward {}",
+                                last_action,
+                                reward
+                            );
+
                             let clamped_reward = reward.clamp(-1000, 1000);
                             if clamped_reward != reward {
                                 serial_println!("Scheduler ML: Warning - Clamped extreme reward value from {} to {}", 
                                               reward, clamped_reward);
                             }
-                            
-                            self.ml_model.update_model(current, last_action, clamped_reward);
+
+                            self.ml_model
+                                .update_model(current, last_action, clamped_reward);
                             self.last_reward = clamped_reward;
                         }
 
                         let action = self.ml_model.decide_action(current);
-                        serial_println!("Scheduler ML: Model recommended action {:?} for process {}",
-                                      action, current.id().0);
+                        serial_println!(
+                            "Scheduler ML: Model recommended action {:?} for process {}",
+                            action,
+                            current.id().0
+                        );
 
                         let changed = self.apply_ml_action(current, action);
-                        serial_println!("Scheduler ML: Applied action {:?}, changes applied: {}",
-                                      action, changed);
-                        
+                        serial_println!(
+                            "Scheduler ML: Applied action {:?}, changes applied: {}",
+                            action,
+                            changed
+                        );
+
                         if changed {
                             self.record_decision(current, action);
                             self.last_action = Some(action);
-                            serial_println!("Scheduler ML: Recorded decision for process {}", 
-                                          current.id().0);
+                            serial_println!(
+                                "Scheduler ML: Recorded decision for process {}",
+                                current.id().0
+                            );
                         }
                     } else {
-                        serial_println!("Scheduler ML: Process {} in state {:?}, not applying ML", 
-                                      current_pid.0, current.state());
+                        serial_println!(
+                            "Scheduler ML: Process {} in state {:?}, not applying ML",
+                            current_pid.0,
+                            current.state()
+                        );
                     }
                 } else {
                     serial_println!("Scheduler ML: Current process {} not found", current_pid.0);
@@ -363,8 +414,11 @@ impl Scheduler {
             }
         }
 
-        serial_println!("Scheduler: Current process count: {}", processes.processes.len());
-    
+        serial_println!(
+            "Scheduler: Current process count: {}",
+            processes.processes.len()
+        );
+
         if processes.current().is_none() && self.current_process.is_none() {
             if let Some((next_pid, _)) = self.priority_scheduler.get_next_process() {
                 if let Some(next) = processes.get_mut_by_id(next_pid) {
@@ -379,7 +433,7 @@ impl Scheduler {
             }
             return;
         }
-    
+
         if let Some(current_pid) = self.current_process {
             if let Some(current) = processes.get_mut_by_id(current_pid) {
                 match current.state() {
@@ -417,7 +471,7 @@ impl Scheduler {
                             self.last_action = Some(action);
                         }
                     }
-                    
+
                     unsafe {
                         self.switch_to(next);
                     }

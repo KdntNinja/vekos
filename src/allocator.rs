@@ -31,13 +31,24 @@ use x86_64::{
 use crate::test_utils;
 
 #[global_allocator]
+/// Global allocator using the buddy allocator.
 pub static ALLOCATOR: LockedBuddyAllocator = LockedBuddyAllocator::new();
 
+/// Indicates whether the heap has been initialized.
 pub static HEAP_INITIALIZED: AtomicBool = AtomicBool::new(false);
+
+/// Start address of the heap.
 pub const HEAP_START: usize = 0x_4444_4444_0000;
+
+/// Size of the heap.
 pub const HEAP_SIZE: usize = 4 * 1024 * 1024;
 
 #[alloc_error_handler]
+/// Handles memory allocation errors.
+///
+/// # Arguments
+///
+/// * `layout` - The layout of the memory that failed to allocate.
 fn alloc_error_handler(layout: Layout) -> ! {
     use core::sync::atomic::{AtomicBool, Ordering};
     static IN_OOM_HANDLER: AtomicBool = AtomicBool::new(false);
@@ -82,6 +93,16 @@ fn alloc_error_handler(layout: Layout) -> ! {
     loop {}
 }
 
+/// Initializes the heap.
+///
+/// # Arguments
+///
+/// * `mapper` - A mutable reference to the page mapper.
+/// * `frame_allocator` - A mutable reference to the frame allocator.
+///
+/// # Returns
+///
+/// A `Result` indicating success or failure.
 pub fn init_heap(
     mapper: &mut impl Mapper<Size4KiB>,
     frame_allocator: &mut impl FrameAllocator<Size4KiB>,
